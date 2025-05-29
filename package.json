@@ -1,0 +1,42 @@
+{
+  "name": "school-moodle-langchain",
+  "version": "0.0.1",
+  "description": "Demo Orquestrator",
+  "main": "build/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node build/index.js",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CarlosLiberJesus/school-moodle-langchain.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/CarlosLiberJesus/school-moodle-langchain/issues"
+  },
+  "homepage": "https://github.com/CarlosLiberJesus/school-moodle-langchain#readme",
+  "dependencies": {
+    "@langchain/google-genai": "^0.2.10",
+    "dotenv": "^16.5.0",
+    "langchain": "^0.3.27"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.27.0",
+    "@eslint/json": "^0.12.0",
+    "@types/node": "^20.9.0",
+    "@typescript-eslint/eslint-plugin": "^8.32.1",
+    "@typescript-eslint/parser": "^8.32.1",
+    "eslint": "^9.27.0",
+    "globals": "^16.1.0",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.12.0",
+    "typescript": "^5.2.2",
+    "typescript-eslint": "^8.32.1"
+  }
+}
