@@ -11,6 +11,11 @@
     "resolveJsonModule": true,
     "allowJs": true
   },
-  "include": ["src/**/*", "test/**/*"],
+  "include": [
+    "src/**/*",
+    "test/**/*",
+    "lib/**/*",
+    "node_modules/@modelcontextprotocol/sdk/dist/esm/**/*.d.ts"
+  ],
   "exclude": ["node_modules"]
 }
