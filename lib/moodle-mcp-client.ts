@@ -1,5 +1,3 @@
-import { Tool } from "@langchain/core/tools"; // Classe base para ferramentas
-import { z } from "zod"; // Para definir o schema da tool (opcional mas bom)
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
@@ -115,52 +113,5 @@ export class MoodleMcpClient {
       this.mcpServerProcess = null;
     }
     console.log("[MyMoodleMcpClient] Shutdown complete.");
-  }
-}
-// --- FIM DO CÓDIGO DO MyMoodleMcpClient ---
-
-// --- INÍCIO DA DEFINIÇÃO DA TOOL PERSONALIZADA ---
-export class GetMoodleCoursesTool extends Tool {
-  name = "get_courses"; // Corresponde ao nome no MCP Server
-  description =
-    "Retrieves a list of Moodle courses. Optionally filters by course name."; // Para o LLM
-
-  // Schema Zod para que o LangChain (e o LLM se for OpenAI Functions) saiba os parâmetros
-  schema = z
-    .object({
-      input: z.string().optional().describe("Text to filter course names by."),
-    })
-    .transform((val) => val.input ?? undefined); // always returns string | undefined
-  //.transform((val) => val.input);
-  // O LLM vai tentar passar 'course_name_filter'
-  // A transformação para 'input' pode confundir.
-  // O `args` em _call já será o objeto { course_name_filter?: string }
-
-  private moodleClient: MoodleMcpClient;
-
-  constructor(moodleClient: MoodleMcpClient) {
-    super(); // Necessário para a classe Tool
-    this.moodleClient = moodleClient;
-    console.log(`[GetMoodleCoursesTool] Initialized with name: ${this.name}`);
-  }
-
-  protected async _call(args: string | undefined): Promise<string> {
-    // args is now string | undefined
-    const mcpServerInput: { course_name_filter?: string } = {};
-    if (typeof args === "string" && args.trim() !== "") {
-      mcpServerInput.course_name_filter = args;
-    }
-
-    try {
-      const resultString = await this.moodleClient.callMcpTool(
-        this.name,
-        mcpServerInput
-      );
-      return resultString;
-    } catch (error: any) {
-      return `Error in tool ${this.name}: ${
-        error.message || JSON.stringify(error)
-      }`;
-    }
   }
 }
