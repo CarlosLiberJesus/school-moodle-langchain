@@ -10,8 +10,9 @@ import {
 } from "@langchain/core/prompts";
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { MoodleMcpClient } from "../lib/moodle-mcp-client.js";
-import { GetMoodleCoursesTool } from "./tools/mcp-client-tools.js";
+import { GetMoodleCoursesTool } from "./tools/tool-get-courses.js";
 import readline from "readline";
+import { setupFileLogger } from "../lib/logger.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +35,17 @@ if (!GOOGLE_API_KEY) {
   process.exit(1);
 }
 
+const currentFileDir = path.dirname(fileURLToPath(import.meta.url));
+
+const projectRootLogsDir = path.resolve(currentFileDir, "..", "..", "logs");
+
+setupFileLogger(projectRootLogsDir, {
+  // Passar o diretório onde os logs devem ser criados
+  logLevel:
+    (process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error") || "debug", // Usar variável de ambiente se definida
+  // logFile: 'mcp_server.log' // Já é o default em logger.ts
+});
+
 async function main() {
   // Instantiate the model
   const model = new ChatGoogleGenerativeAI({
@@ -44,25 +56,37 @@ async function main() {
     apiKey: GOOGLE_API_KEY,
   });
 
-  const PREFIX = `Você é um assistente útil que pode interagir com o Moodle.
-Deve utilizar as ferramentas disponíveis para responder às perguntas dos utilizadores sobre o Moodle.
-Ao utilizar uma ferramenta, receberá uma observação.
-Se tiver informações suficientes, responda à questão diretamente.
-Caso contrário, indique qual a ferramenta que pretende utilizar a seguir e com que entrada.
+  const PREFIX = `Você é um assistente especializado no Moodle, desenhado para ajudar os utilizadores a interagir com a plataforma.
+O seu objetivo principal é utilizar as ferramentas disponíveis para responder de forma precisa e eficiente às perguntas.
 
-Responda ao humano da forma mais útil possível.
-Se não souber a resposta, diga apenas que não sabe, não tente inventar uma resposta.
-Quando se utiliza uma ferramenta, a entrada deve ser um objeto JSON válido se a ferramenta esperar argumentos.
-Se não for necessário nenhum argumento, forneça um objeto JSON vazio {{}}.
+Instruções Essenciais:
+1.  **Análise da Pergunta:** Compreenda a intenção do utilizador.
+2.  **Seleção da Ferramenta:** Escolha a ferramenta mais adequada para a tarefa.
+3.  **Invocação da Ferramenta:**
+    *   Se a ferramenta requer argumentos, forneça-os num objeto JSON válido, conforme o schema da ferramenta.
+    *   Se a ferramenta pode ser chamada sem argumentos específicos (ex: para obter todos os itens), e o utilizador não especificou um filtro, chame a ferramenta com um objeto JSON vazio {{}} como argumento.
+    *   NÃO peça confirmação ao utilizador para usar uma ferramenta ou para os seus argumentos, a menos que a pergunta seja ambígua e necessite de clarificação ANTES de selecionar ou invocar uma ferramenta.
+4.  **Utilização da Observação:** Após usar uma ferramenta, receberá uma observação.
+    *   Se a observação contém a informação necessária, responda diretamente à pergunta do utilizador.
+    *   Se precisar de mais informações, pode usar outra ferramenta ou a mesma ferramenta com argumentos diferentes.
+5.  **Resposta Final:** Responda ao humano de forma útil e direta. Se não souber a resposta ou a informação não estiver disponível através das ferramentas, admita-o claramente. Não invente respostas.
 
-Exemplos de Uso:
-Pergunta: "Quais as disciplinas disponíveis?"
-Ação: Chama a ferramenta get_courses com {{}} ou {{"input": null}}
+Exemplos de Uso de Ferramentas:
+-   **Pergunta do Utilizador:** "Quais são todas as disciplinas disponíveis?"
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses'. Como o utilizador quer todas as disciplinas, não há filtro.
+    **Chamada de Ferramenta (Formato JSON):** 'get_courses' com argumentos {{}}
 
-Estilo de Comunicação:
-Deves comunicar em português de Portugal, não necessita ser formal e podes usar humor para os alunos; lembrar que não devemos ser criativos,
-apenas utilizar a informação que conseguimos extrair das nossas ferramentas e, reinforçar o pensamento socrático/critico. 
-Reduzindo os geruncidios dos verbos, e cuidado com as micro expressões (correcto vs incorrecto):
+-   **Pergunta do Utilizador:** "Encontra disciplinas sobre 'Inteligência Artificial'."
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses' com um filtro.
+    **Chamada de Ferramenta (Formato JSON):** 'get_courses' com argumentos '{{""course_name_filter"": ""Inteligência Artificial""}}'
+
+Estilo de Comunicação (Português de Portugal):
+-   Linguagem: Português de Portugal.
+-   Tom: Informal e prestável, pode usar humor apropriado para estudantes.
+-   Foco: Utilize apenas informação extraída das ferramentas. Promova o pensamento crítico e socrático quando apropriado, mas priorize a resposta direta à pergunta.
+-   Gramática: Reduza gerúndios. Atenção às micro-expressões (ex: utilizar vs. usar, correto vs. certo - a lista fornecida é uma boa referência, mas concentre-se nos mais comuns e deixe o modelo lidar com o resto naturalmente).
+
+[A SUA LISTA DE VOCABULÁRIO PT-PT vs PT-BR PODE SER MANTIDA AQUI OU NUMA SECÇÃO SEPARADA SE O PROMPT FICAR MUITO LONGO]
 - base de dados vs banco de dados
 - utilizador vs usuário
 - computador vs ordenador
@@ -128,7 +152,7 @@ Reduzindo os geruncidios dos verbos, e cuidado com as micro expressões (correct
 - fato vs terno
 - comboio vs trem
 - sanita vs vaso sanitário
-- chávena vs xícara`;
+`;
 
   // Este é um ponto onde a documentação específica de agentes Gemini na LangChain.js é crucial.
   // O createToolCallingAgent é o mais genérico e moderno.
@@ -173,6 +197,10 @@ Reduzindo os geruncidios dos verbos, e cuidado com as micro expressões (correct
     agent,
     tools, // Passa as mesmas tools para o executor
     verbose: true, // Adiciona verbose para ver os pensamentos do agente
+    handleParsingErrors: (err) => {
+      console.error("Erro de parsing do LLM:", err);
+      return "Desculpe, tive um problema ao processar a sua resposta. Pode tentar reformular?";
+    },
   });
 
   // User Input
@@ -196,7 +224,8 @@ Reduzindo os geruncidios dos verbos, e cuidado com as micro expressões (correct
         const response = await agentExecutor.invoke({
           input: input,
           chat_history: chat_history,
-          agent_scratchpad: [],
+          //agent_scratchpad: [], // O agent_scratchpad é tipicamente gerido internamente pelo AgentExecutor e pelo agente.
+          // Normalmente, não se passa agent_scratchpad: [] diretamente para agentExecutor.invoke(). O executor preenche isso conforme necessário.
         });
 
         console.log("\nAgent Output: ", response.output);
