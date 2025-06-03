@@ -72,11 +72,16 @@ export class MoodleMcpClient {
     return this.client;
   }
 
-  public async callMcpTool(toolName: string, input: any): Promise<string> {
+  public async callMcpTool(
+    toolName: string,
+    input: any,
+    userToken: string
+  ): Promise<string> {
     const mcpClient = await this.startAndConnect();
     const requestParams: CallToolRequest["params"] = {
       name: toolName,
       input: input,
+      moodle_token: userToken,
     };
 
     console.log(

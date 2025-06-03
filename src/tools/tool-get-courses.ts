@@ -4,6 +4,7 @@ import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // 1. Defina o schema Zod
 const getMoodleCoursesToolSchema = z.object({
+  moodle_token: z.string().describe("O ID da disciplina."),
   course_name_filter: z
     .string()
     .optional() // Permite que a chave esteja ausente ou o valor seja undefined
@@ -36,17 +37,22 @@ export class GetMoodleCoursesTool extends StructuredTool<
   }
 
   // 'args' agora é automaticamente e corretamente tipado como GetMoodleCoursesToolInput
-  async _call(args: GetMoodleCoursesToolInput): Promise<string> {
+  async _call(
+    args: GetMoodleCoursesToolInput,
+    config?: Record<string, any>
+  ): Promise<string> {
     console.log(
-      `[GetMoodleCoursesTool._call] Received args: ${JSON.stringify(
-        args,
-        null,
-        2
-      )}`
+      `[GetMoodleCoursesTool._call] Received args: ${JSON.stringify(args)}`
+    );
+    console.log(
+      `[GetMoodleCoursesTool._call] Received config: ${JSON.stringify(config)}`
     );
 
     const mcpServerInput: { course_name_filter?: string } = {};
-
+    const moodleToken = config?.configurable?.moodle_user_token;
+    if (!moodleToken) {
+      return "Erro: Token do utilizador não fornecido para a ferramenta.";
+    }
     // Esta verificação agora deve funcionar sem erros de TypeScript
     if (args.course_name_filter && args.course_name_filter.trim() !== "") {
       // A verificação typeof args.course_name_filter === "string" é redundante
@@ -64,7 +70,8 @@ export class GetMoodleCoursesTool extends StructuredTool<
     try {
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
-        mcpServerInput
+        mcpServerInput,
+        moodleToken
       );
       return resultString;
     } catch (error) {

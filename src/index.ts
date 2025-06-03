@@ -46,13 +46,16 @@ setupFileLogger(projectRootLogsDir, {
   // logFile: 'mcp_server.log' // Já é o default em logger.ts
 });
 
-async function main() {
-  // Instantiate the model
+let agentExecutorInstance: any; // Singleton para o executor
+
+async function initializeAgent() {
+  if (agentExecutorInstance) {
+    return agentExecutorInstance;
+  }
+
   const model = new ChatGoogleGenerativeAI({
-    model: "gemini-2.0-flash",
-    //model: "gemini-1.5-flash-latest",
+    model: "gemini-2.0-flash", // ou 1.5-flash
     temperature: 0.3,
-    verbose: false,
     apiKey: GOOGLE_API_KEY,
   });
 
@@ -154,74 +157,83 @@ Estilo de Comunicação (Português de Portugal):
 - sanita vs vaso sanitário
 `;
 
-  // Este é um ponto onde a documentação específica de agentes Gemini na LangChain.js é crucial.
-  // O createToolCallingAgent é o mais genérico e moderno.
   const prompt = ChatPromptTemplate.fromMessages([
-    ["system", PREFIX], // Ou um prompt mais específico para tool calling
+    ["system", PREFIX],
     new MessagesPlaceholder("chat_history"),
-    ["human", "{input}"],
-    new MessagesPlaceholder("agent_scratchpad"), // Para o agente guardar os seus passos intermediários (chamadas a tools e observações)
+    ["human", "{input}"], // A pergunta do utilizador
+    // Adicionar placeholder para moodle_course_id e moodle_user_token se o prompt os usar diretamente
+    // Ex: ["system", "Contexto adicional: Curso ID {moodle_course_id}, Token Utilizador: {moodle_user_token}"],
+    // OU, melhor, passar estes valores para as tools quando são chamadas.
+    new MessagesPlaceholder("agent_scratchpad"),
   ]);
 
-  // Instantiate o nosso cliente MCP
-  // AJUSTA O PATH para o teu mcp_server.js compilado/executável
-  // Exemplo: se o teu MCP Server está em ../school-moodle-mcp/dist/src/mcp_server.js
+  // O cliente MCP pode precisar ser instanciado aqui ou passado para as tools
   const moodleClient = new MoodleMcpClient(
     "E:/MCPs/school-moodle-mcp/build/src/index.js"
   );
 
-  // Tools
-  // const searchTool = new TavilySearchResults(); // Podes manter se quiseres pesquisa web geral
-  const getMoodleCourses = new GetMoodleCoursesTool(moodleClient); // Passa o cliente para a tool
-  //const getCourse = new GetCourseTool(moodleClient);
-
-  // Adiciona outras tools do MCP Server aqui, e.g.:
-  // class GetMoodleActivityDetailsTool extends Tool { /* ... similar a GetMoodleCoursesTool ... */ }
-  // const getActivityDetails = new GetMoodleActivityDetailsTool(moodleClient);
-
   const tools = [
-    getMoodleCourses,
-    // getCourse /*, searchTool, getActivityDetails */,
+    new GetMoodleCoursesTool(moodleClient),
+    // TODO: Criar novas tools que usem moodle_course_id e moodle_user_token
+    // new GetCourseContextTool(moodleClient), // Ex: Esta tool usaria moodle_course_id e moodle_user_token
+    // new GetUserHistoryTool(moodleClient),  // Ex: Esta tool usaria moodle_user_token e course_id
   ];
 
-  // O createToolCallingAgent é uma função mais recente e genérica
-  // para construir agentes que usam o "tool calling" dos LLMs.
-  const agent = await createToolCallingAgent({
-    llm: model, // O teu modelo Gemini
-    tools, // A tua lista de LangChain Tools
-    prompt,
-  });
+  const agent = await createToolCallingAgent({ llm: model, tools, prompt });
+  agentExecutorInstance = new AgentExecutor({ agent, tools, verbose: true });
 
-  // Create the executor
-  const agentExecutor = new AgentExecutor({
-    agent,
-    tools, // Passa as mesmas tools para o executor
-    verbose: true, // Adiciona verbose para ver os pensamentos do agente
-    handleParsingErrors: (err) => {
-      console.error("Erro de parsing do LLM:", err);
-      return "Desculpe, tive um problema ao processar a sua resposta. Pode tentar reformular?";
+  console.log("Agente LangChain inicializado.");
+  return agentExecutorInstance;
+}
+
+// Função a ser chamada pela sua WebApp
+export async function invokeAgent(params: any) {
+  const executor = await initializeAgent(); // Garante que o agente está inicializado
+
+  const invokeParams = {
+    input: params.input,
+    chat_history: params.chat_history,
+    // Se o prompt espera estas variáveis diretamente:
+    // moodle_course_id: params.moodle_course_id,
+    // moodle_user_token: params.moodle_user_token,
+  };
+
+  let augmentedInput = params.input;
+  if (params.moodle_course_id) {
+    augmentedInput += `\n(Contexto para esta pergunta: ID da disciplina = ${params.moodle_course_id})`;
+  }
+
+  console.log(
+    `[Agent Service] Invocando agentExecutor com input: "${invokeParams.input}"`
+  );
+  const result = await executor.invoke(invokeParams, {
+    // Configuração para passar dados para as tools (exemplo conceptual, ver doc LangChain)
+    // Não adicione o token diretamente ao input visível ao utilizador ou LLM de forma insegura.
+    // O token deve ser passado como argumento para a tool que o necessita,
+    configurable: {
+      moodle_user_token: params.moodle_user_token,
+      moodle_course_id: params.moodle_course_id,
     },
   });
 
-  // User Input
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  return result;
+}
 
-  const chat_history: Array<HumanMessage | AIMessage> = [];
+// Se este ficheiro for corrido diretamente (node build/src/agent/index.js), pode iniciar o readline para testes locais
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // Verifica se é o módulo principal
+  console.log("Agente LangChain a correr em modo de teste local (readline).");
+  initializeAgent().then(() => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
 
-  function askQuestionLoop() {
+    const chat_history: Array<HumanMessage | AIMessage> = [];
     rl.question("User: ", async (input) => {
-      if (input.toLowerCase() === "exit") {
-        rl.close();
-        moodleClient.shutdown(); // Importante para terminar o processo do MCP server
-        return;
-      }
-
       try {
         console.log(`\n[Agent Loop] Invoking agent with input: "${input}"`);
-        const response = await agentExecutor.invoke({
+        const response = await agentExecutorInstance.invoke({
           input: input,
           chat_history: chat_history,
           //agent_scratchpad: [], // O agent_scratchpad é tipicamente gerido internamente pelo AgentExecutor e pelo agente.
@@ -234,15 +246,10 @@ Estilo de Comunicação (Português de Portugal):
         chat_history.push(new AIMessage(response.output));
       } catch (e: any) {
         console.error("\n[Agent Loop] Error during agent invocation:", e);
-        // Opcional: Adicionar uma mensagem de erro ao histórico
-        // chat_history.push(new AIMessage(`Sorry, I encountered an error: ${e.message}`));
+        chat_history.push(
+          new AIMessage(`Sorry, I encountered an error: ${e.message}`)
+        );
       }
-      askQuestionLoop();
     });
-  }
-
-  console.log("LangChain Moodle Agent started. Type 'exit' to quit.");
-  askQuestionLoop();
+  });
 }
-
-main().catch(console.error);
