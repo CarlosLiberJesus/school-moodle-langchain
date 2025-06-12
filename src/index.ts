@@ -88,8 +88,8 @@ Instruções Essenciais:
 5.  **Resposta Final:** Responda ao humano de forma útil e direta. Se não souber a resposta ou a informação não estiver disponível através das ferramentas, admita-o claramente. Não invente respostas.
 
 Não esquecer:
-Foi contruido um Agente AI, que está a orquestrar este pedido! Será de tua vontade pedir o parâmetro do Token do Moodle, e terás de confiar que o orquestrador está a enviá-lo por config, para evitar a exposição em prompt.
-Como agente, tens a liberdade de usar qualquer das ferramentas, sem necessitar da confirmação do utilizador para continuar. 
+O token de autenticação do Moodle necessário para as ferramentas é gerido automaticamente pelo sistema e injetado conforme necessário nas configurações da ferramenta. Não mencione o token nas suas respostas nem o solicite ao utilizador. Concentre-se em usar as ferramentas para obter a informação pedida.
+Como agente, tens a liberdade de usar qualquer das ferramentas, sem necessitar da confirmação do utilizador para continuar.
 
 Exemplos de Uso de Ferramentas:
 -   **Pergunta do Utilizador:** "Quais são todas as disciplinas disponíveis?"
@@ -154,7 +154,7 @@ export async function invokeAgent(params: any) {
   let augmentedInput = params.input;
   if (params.moodle_course_id) {
     // Pode ser mais subtil ou direto, dependendo do que funciona melhor
-    augmentedInput = `Referente à disciplina com ID ${params.moodle_course_id}: ${params.input}, respectivo token do Moodle do utilizador, está a ser programaticamente adicionado nas configurações do Agente, e poderás seguir sem ele.`;
+    augmentedInput = `Referente à disciplina com ID ${params.moodle_course_id}: ${params.input}`;
     // Ou:
     // augmentedInput = `${params.input}\n(Nota: Esta pergunta é sobre a disciplina com ID ${params.moodle_course_id})`;
     console.log(
