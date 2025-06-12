@@ -13,6 +13,11 @@ import { MoodleMcpClient } from "../lib/moodle-mcp-client.js";
 import { GetMoodleCoursesTool } from "./tools/tool-get-courses.js";
 import readline from "readline";
 import { setupFileLogger } from "../lib/logger.js";
+import { GetMoodleCourseContentsTool } from "./tools/tool-course-details.js";
+import { FetchActivityContentTool } from "./tools/tool-get-activity-content.js";
+import { GetActivityDetailsTool } from "./tools/tool-get-activity-details.js";
+import { GetPageModuleContentTool } from "./tools/tool-get-page-module.js";
+import { GetResourceFileContentTool } from "./tools/tool-get-resource-file.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,8 +34,15 @@ if (loadEnvResult.error) {
 }
 
 export const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+export const GOOGLE_MODEL = process.env.GOOGLE_MODEL ?? "";
 
-if (!GOOGLE_API_KEY) {
+if (!GOOGLE_API_KEY || !GOOGLE_MODEL) {
+  console.error(`Config: GOOGLE_API_KEY or GOOGLE_MODEL not found`);
+  process.exit(1);
+}
+
+export const MOODLE_MCP_SERVER = process.env.MOODLE_MCP_SERVER ?? "";
+if (!MOODLE_MCP_SERVER) {
   console.error(`Config: GOOGLE_API_KEY not found`);
   process.exit(1);
 }
@@ -54,8 +66,8 @@ async function initializeAgent() {
   }
 
   const model = new ChatGoogleGenerativeAI({
-    model: "gemini-2.0-flash", // ou 1.5-flash
-    temperature: 0.3,
+    model: GOOGLE_MODEL,
+    temperature: 0.4,
     apiKey: GOOGLE_API_KEY,
   });
 
@@ -68,93 +80,41 @@ Instruções Essenciais:
 3.  **Invocação da Ferramenta:**
     *   Se a ferramenta requer argumentos, forneça-os num objeto JSON válido, conforme o schema da ferramenta.
     *   Se a ferramenta pode ser chamada sem argumentos específicos (ex: para obter todos os itens), e o utilizador não especificou um filtro, chame a ferramenta com um objeto JSON vazio {{}} como argumento.
-    *   NÃO peça confirmação ao utilizador para usar uma ferramenta ou para os seus argumentos, a menos que a pergunta seja ambígua e necessite de clarificação ANTES de selecionar ou invocar uma ferramenta.
+    *   **Autenticação (Token Moodle): As ferramentas que acedem a dados específicos do Moodle usarão automaticamente a autenticação (token) fornecida para esta sessão. Você NÃO precisa de pedir o token ao utilizador nem de o incluir nos argumentos da ferramenta, a menos que o schema da ferramenta o peça explicitamente (o que é raro).**
+    *   NÃO peça confirmação ao utilizador para usar uma ferramenta ou para os seus argumentos (exceto o token, como explicado acima), a menos que a pergunta seja ambígua e necessite de clarificação ANTES de selecionar ou invocar uma ferramenta.
 4.  **Utilização da Observação:** Após usar uma ferramenta, receberá uma observação.
     *   Se a observação contém a informação necessária, responda diretamente à pergunta do utilizador.
     *   Se precisar de mais informações, pode usar outra ferramenta ou a mesma ferramenta com argumentos diferentes.
 5.  **Resposta Final:** Responda ao humano de forma útil e direta. Se não souber a resposta ou a informação não estiver disponível através das ferramentas, admita-o claramente. Não invente respostas.
 
+Não esquecer:
+Foi contruido um Agente AI, que está a orquestrar este pedido! Será de tua vontade pedir o parâmetro do Token do Moodle, e terás de confiar que o orquestrador está a enviá-lo por config, para evitar a exposição em prompt.
+Como agente, tens a liberdade de usar qualquer das ferramentas, sem necessitar da confirmação do utilizador para continuar. 
+
 Exemplos de Uso de Ferramentas:
 -   **Pergunta do Utilizador:** "Quais são todas as disciplinas disponíveis?"
-    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses'. Como o utilizador quer todas as disciplinas, não há filtro.
-    **Chamada de Ferramenta (Formato JSON):** 'get_courses' com argumentos {{}}
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses'. Como o utilizador quer todas as disciplinas, não há filtro. O token será usado automaticamente pela ferramenta se necessário.
+    **Chamada de Ferramenta (Formato JSON para argumentos):** {{}} // Para 'get_courses'
+
+-   **Pergunta do Utilizador:** "Quais os conteúdos da disciplina com ID 7?"
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_course_contents'. O ID da disciplina é 7. O token será usado automaticamente.
+    **Chamada de Ferramenta (Formato JSON para argumentos):** {{"course_id": 7}} // Para 'get_course_contents'
 
 -   **Pergunta do Utilizador:** "Encontra disciplinas sobre 'Inteligência Artificial'."
-    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses' com um filtro.
-    **Chamada de Ferramenta (Formato JSON):** 'get_courses' com argumentos '{{""course_name_filter"": ""Inteligência Artificial""}}'
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses' com um filtro. O token será usado automaticamente pela ferramenta se necessário.
+    **Chamada de Ferramenta (Formato JSON para argumentos):** {{"course_name_filter": "Inteligência Artificial"}}
 
 Estilo de Comunicação (Português de Portugal):
 -   Linguagem: Português de Portugal.
 -   Tom: Informal e prestável, pode usar humor apropriado para estudantes.
 -   Foco: Utilize apenas informação extraída das ferramentas. Promova o pensamento crítico e socrático quando apropriado, mas priorize a resposta direta à pergunta.
 -   Gramática: Reduza gerúndios. Atenção às micro-expressões (ex: utilizar vs. usar, correto vs. certo - a lista fornecida é uma boa referência, mas concentre-se nos mais comuns e deixe o modelo lidar com o resto naturalmente).
-
-[A SUA LISTA DE VOCABULÁRIO PT-PT vs PT-BR PODE SER MANTIDA AQUI OU NUMA SECÇÃO SEPARADA SE O PROMPT FICAR MUITO LONGO]
+Exemplos a ter cuidado:
 - base de dados vs banco de dados
 - utilizador vs usuário
 - computador vs ordenador
 - gestor vs gerenciador
-- penso higiênico vs absorvente higiênico
-- tira-cápsulas vs abridor
-- talho vs açougue
-- lixívia vs água sanitária
-- hospedeira de bordo vs aeromoça
-- sebenta vs apostila
-- alforreca vs água viva
-- alcatrão vs asfalto
-- casa de banho vs banheiro
-- rebuçado ou caramelo vs bala
-- pequeno almoço vs café da manhã
-- caminhão vs camião
-- palhinha vs canudo
-- bilhete de identidade vs carteira de identidade
-- carta de condução vs carteira de motorista
-- telemóvel vs celular
-- invisual vs cego
-- pastilha elástica vs chiclete
-- descapotável vs conversível
-- estomatologista vs dentista
-- autoclismo vs descarga
-- fita cola vs durex
-- adesivo vs esparadrapo
-- equipa vs equipe
-- perceber vs entender
-- passadeira vs faixa de pedestres
-- travão vs freio
-- gajo/gaja vs rapaz/moça
-- malta vs galera (turma, pessoal)
-- empregado de mesa vs garçom
-- guarda-redes vs goleiro
-- frigorifico vs geladeira
-- agrafador vs grampeador
-- banda desenhada vs história em quadrinhos
-- sardanisca vs lagartixa
-- fixe vs legal
-- lima vs limão
-- fato de banho vs maiô
-- biberão vs mamadeira
-- peúga (peugas) vs meia curta
-- miúdo vs menino
-- vitrine vs montra
-- endereço vs morada
-- autocarro vs ônibus
-- utente vs paciente
-- pera vs cavanhaque
-- homem das obras vs pedreiro
-- paragem, parada vs ponto de ônibus
-- explicador vs professor particular
-- fiambre vs presunto
-- sanita vs privada
-- estrugido (termo usado mais no Norte do país) vs refogado
-- rotunda vs rotatória
-- sandes vs sanduíche
-- centro comercial vs shopping
-- sumo vs suco
-- gelado vs sorvete
-- ecrã vs tela
-- fato vs terno
-- comboio vs trem
-- sanita vs vaso sanitário
+- revisionado vs revisado
 `;
 
   const prompt = ChatPromptTemplate.fromMessages([
@@ -168,15 +128,16 @@ Estilo de Comunicação (Português de Portugal):
   ]);
 
   // O cliente MCP pode precisar ser instanciado aqui ou passado para as tools
-  const moodleClient = new MoodleMcpClient(
-    "E:/MCPs/school-moodle-mcp/build/src/index.js"
-  );
+  const moodleClient = new MoodleMcpClient(MOODLE_MCP_SERVER);
 
   const tools = [
     new GetMoodleCoursesTool(moodleClient),
-    // TODO: Criar novas tools que usem moodle_course_id e moodle_user_token
-    // new GetCourseContextTool(moodleClient), // Ex: Esta tool usaria moodle_course_id e moodle_user_token
-    // new GetUserHistoryTool(moodleClient),  // Ex: Esta tool usaria moodle_user_token e course_id
+    new GetMoodleCourseContentsTool(moodleClient),
+    new FetchActivityContentTool(moodleClient),
+    new GetActivityDetailsTool(moodleClient),
+    new GetPageModuleContentTool(moodleClient),
+    new GetResourceFileContentTool(moodleClient),
+    // TODO: Continuar a adicionar ideias
   ];
 
   const agent = await createToolCallingAgent({ llm: model, tools, prompt });
@@ -190,32 +151,38 @@ Estilo de Comunicação (Português de Portugal):
 export async function invokeAgent(params: any) {
   const executor = await initializeAgent(); // Garante que o agente está inicializado
 
+  let augmentedInput = params.input;
+  if (params.moodle_course_id) {
+    // Pode ser mais subtil ou direto, dependendo do que funciona melhor
+    augmentedInput = `Referente à disciplina com ID ${params.moodle_course_id}: ${params.input}, respectivo token do Moodle do utilizador, está a ser programaticamente adicionado nas configurações do Agente, e poderás seguir sem ele.`;
+    // Ou:
+    // augmentedInput = `${params.input}\n(Nota: Esta pergunta é sobre a disciplina com ID ${params.moodle_course_id})`;
+    console.log(
+      `[Agent Service] Input aumentado para o LLM: "${augmentedInput}"`
+    );
+  }
+
   const invokeParams = {
-    input: params.input,
+    input: augmentedInput,
     chat_history: params.chat_history,
     // Se o prompt espera estas variáveis diretamente:
     // moodle_course_id: params.moodle_course_id,
     // moodle_user_token: params.moodle_user_token,
   };
 
-  let augmentedInput = params.input;
-  if (params.moodle_course_id) {
-    augmentedInput += `\n(Contexto para esta pergunta: ID da disciplina = ${params.moodle_course_id})`;
-  }
-
   console.log(
-    `[Agent Service] Invocando agentExecutor com input: "${invokeParams.input}"`
+    `[Agent Service] Invocando agentExecutor com input (final): "${invokeParams.input}" e chat_history.`
   );
+  console.log(
+    `[Agent Service] Passando para configurable: moodle_user_token=${params.moodle_user_token}, moodle_course_id=${params.moodle_course_id}`
+  );
+
   const result = await executor.invoke(invokeParams, {
-    // Configuração para passar dados para as tools (exemplo conceptual, ver doc LangChain)
-    // Não adicione o token diretamente ao input visível ao utilizador ou LLM de forma insegura.
-    // O token deve ser passado como argumento para a tool que o necessita,
     configurable: {
       moodle_user_token: params.moodle_user_token,
-      moodle_course_id: params.moodle_course_id,
+      moodle_course_id: params.moodle_course_id, // Ainda útil para as tools confirmarem ou usarem diretamente
     },
   });
-
   return result;
 }
 
@@ -230,15 +197,24 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     });
 
     const chat_history: Array<HumanMessage | AIMessage> = [];
-    rl.question("User: ", async (input) => {
+    rl.setPrompt("User: ");
+    rl.prompt();
+
+    rl.on("line", async (input) => {
       try {
         console.log(`\n[Agent Loop] Invoking agent with input: "${input}"`);
-        const response = await agentExecutorInstance.invoke({
-          input: input,
-          chat_history: chat_history,
-          //agent_scratchpad: [], // O agent_scratchpad é tipicamente gerido internamente pelo AgentExecutor e pelo agente.
-          // Normalmente, não se passa agent_scratchpad: [] diretamente para agentExecutor.invoke(). O executor preenche isso conforme necessário.
-        });
+        const response = await agentExecutorInstance.invoke(
+          {
+            input: input,
+            chat_history: chat_history,
+          },
+          {
+            configurable: {
+              moodle_user_token: process.argv[2],
+              moodle_course_id: Number(process.argv[3]),
+            },
+          }
+        );
 
         console.log("\nAgent Output: ", response.output);
 
@@ -250,6 +226,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           new AIMessage(`Sorry, I encountered an error: ${e.message}`)
         );
       }
+      rl.prompt();
     });
   });
 }

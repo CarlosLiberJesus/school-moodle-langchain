@@ -4,7 +4,7 @@ import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // 1. Defina o schema Zod
 const getMoodleCoursesToolSchema = z.object({
-  moodle_token: z.string().describe("O ID da disciplina."),
+  // moodle_token: z.string().describe("O ID da disciplina."),
   course_name_filter: z
     .string()
     .optional() // Permite que a chave esteja ausente ou o valor seja undefined
@@ -41,27 +41,22 @@ export class GetMoodleCoursesTool extends StructuredTool<
     args: GetMoodleCoursesToolInput,
     config?: Record<string, any>
   ): Promise<string> {
-    console.log(
-      `[GetMoodleCoursesTool._call] Received args: ${JSON.stringify(args)}`
-    );
-    console.log(
-      `[GetMoodleCoursesTool._call] Received config: ${JSON.stringify(config)}`
-    );
+    const moodleToken =
+      config?.configurable?.moodle_user_token ||
+      config?.metadata?.moodle_user_token;
 
-    const mcpServerInput: { course_name_filter?: string } = {};
-    const moodleToken = config?.configurable?.moodle_user_token;
     if (!moodleToken) {
       return "Erro: Token do utilizador não fornecido para a ferramenta.";
     }
-    // Esta verificação agora deve funcionar sem erros de TypeScript
+    const mcpServerInput: {
+      moodle_token: string;
+      course_name_filter?: string;
+    } = {
+      moodle_token: moodleToken,
+    };
     if (args.course_name_filter && args.course_name_filter.trim() !== "") {
-      // A verificação typeof args.course_name_filter === "string" é redundante
-      // se o schema Zod já garante que é uma string ou null/undefined.
-      // Zod já fez essa validação. Se chegou aqui, é string, null ou undefined.
-      // args.course_name_filter será truthy apenas se for uma string não vazia.
       mcpServerInput.course_name_filter = args.course_name_filter.trim();
     }
-
     console.log(
       `[GetMoodleCoursesTool] Calling MCP tool '${
         this.name
@@ -70,8 +65,7 @@ export class GetMoodleCoursesTool extends StructuredTool<
     try {
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
-        mcpServerInput,
-        moodleToken
+        mcpServerInput
       );
       return resultString;
     } catch (error) {
