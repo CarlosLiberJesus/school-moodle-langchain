@@ -18,6 +18,7 @@ import { FetchActivityContentTool } from "./tools/tool-get-activity-content.js";
 import { GetActivityDetailsTool } from "./tools/tool-get-activity-details.js";
 import { GetPageModuleContentTool } from "./tools/tool-get-page-module.js";
 import { GetResourceFileContentTool } from "./tools/tool-get-resource-file.js";
+import { GetCourseActivitiesTool } from "./tools/tool-get-course-activities.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -137,6 +138,7 @@ Exemplos a ter cuidado:
     new GetActivityDetailsTool(moodleClient),
     new GetPageModuleContentTool(moodleClient),
     new GetResourceFileContentTool(moodleClient),
+    new GetCourseActivitiesTool(moodleClient),
     // TODO: Continuar a adicionar ideias
   ];
 
