@@ -11,15 +11,19 @@ import {
 import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { MoodleMcpClient } from "../lib/moodle-mcp-client.js";
 import { GetMoodleCoursesTool } from "./tools/tool-get-courses.js";
-import readline from "readline";
-import { setupFileLogger } from "../lib/logger.js";
 import { GetMoodleCourseContentsTool } from "./tools/tool-course-details.js";
 import { FetchActivityContentTool } from "./tools/tool-get-activity-content.js";
 import { GetActivityDetailsTool } from "./tools/tool-get-activity-details.js";
 import { GetPageModuleContentTool } from "./tools/tool-get-page-module.js";
 import { GetResourceFileContentTool } from "./tools/tool-get-resource-file.js";
 import { GetCourseActivitiesTool } from "./tools/tool-get-course-activities.js";
-import { DateTimeHelperTool } from "./tools/tool-datetime-helper.js"; // Added import
+import { DateTimeHelperTool } from "./tools/tool-datetime-helper.js";
+import readline from "readline";
+import { setupFileLogger } from "../lib/logger.js";
+import {
+  CustomAgentMonitor,
+  PerformanceMonitor,
+} from "../lib/agent-monitor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,35 +49,57 @@ if (!GOOGLE_API_KEY || !GOOGLE_MODEL) {
 
 export const MOODLE_MCP_SERVER = process.env.MOODLE_MCP_SERVER ?? "";
 if (!MOODLE_MCP_SERVER) {
-  console.error(`Config: GOOGLE_API_KEY not found`);
+  console.error(`Config: MOODLE_MCP_SERVER not found`);
   process.exit(1);
 }
 
 const currentFileDir = path.dirname(fileURLToPath(import.meta.url));
-
 const projectRootLogsDir = path.resolve(currentFileDir, "..", "..", "logs");
 
 setupFileLogger(projectRootLogsDir, {
-  // Passar o diretório onde os logs devem ser criados
   logLevel:
-    (process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error") || "debug", // Usar variável de ambiente se definida
-  // logFile: 'mcp_server.log' // Já é o default em logger.ts
+    (process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error") || "debug",
 });
 
-let agentExecutorInstance: any; // Singleton para o executor
+// CLASSE AGENTMANAGER - SUBSTITUI O SINGLETON ANTERIOR
+class AgentManager {
+  private static instance: AgentManager;
+  private agentExecutor: any = null;
+  private monitor: CustomAgentMonitor;
+  private performanceMonitor: PerformanceMonitor;
 
-async function initializeAgent() {
-  if (agentExecutorInstance) {
-    return agentExecutorInstance;
+  private constructor() {
+    // Configurar nível de log via variável de ambiente
+    const logLevel =
+      (process.env.AGENT_LOG_LEVEL as "minimal" | "detailed" | "debug") ||
+      "minimal";
+    this.monitor = new CustomAgentMonitor(logLevel);
+    this.performanceMonitor = PerformanceMonitor.getInstance();
+
+    console.log(`🔍 Monitor iniciado no nível: ${logLevel}`);
   }
 
-  const model = new ChatGoogleGenerativeAI({
-    model: GOOGLE_MODEL,
-    temperature: 0.4,
-    apiKey: GOOGLE_API_KEY,
-  });
+  static getInstance(): AgentManager {
+    if (!AgentManager.instance) {
+      AgentManager.instance = new AgentManager();
+    }
+    return AgentManager.instance;
+  }
 
-  const PREFIX = `Você é um assistente especializado no Moodle, desenhado para ajudar os utilizadores a interagir com a plataforma.
+  async initialize() {
+    if (this.agentExecutor) {
+      return this.agentExecutor;
+    }
+
+    console.log("🚀 Inicializando AgentManager...");
+
+    const model = new ChatGoogleGenerativeAI({
+      model: GOOGLE_MODEL,
+      temperature: 0.4,
+      apiKey: GOOGLE_API_KEY,
+    });
+
+    const PREFIX = `Você é um assistente especializado no Moodle, desenhado para ajudar os utilizadores a interagir com a plataforma.
 O seu objetivo principal é utilizar as ferramentas disponíveis para responder de forma precisa e eficiente às perguntas.
 
 Instruções Essenciais:
@@ -126,7 +152,6 @@ Instruções Adicionais para Datas e Tempo:
     - A ferramenta \`get_course_activities\` retorna uma lista de todas as atividades de um curso (dado \`course_id\`), incluindo um campo \`timemodified\` (timestamp Unix da última modificação). Use esta ferramenta para perguntas sobre o que foi alterado ou adicionado recentemente num curso. Para comparar o \`timemodified\` com um período (ex: "esta semana"), use \`datetime_helper\` para obter o período e converter o \`timemodified\`.
     - Para saber prazos (\`duedate\`) de atividades, primeiro identifique atividades potenciais com \`get_course_activities\` ou \`get_course_contents\`. Depois, use \`fetch_activity_content\` ou \`get_activity_details\` para a atividade específica, pois estas ferramentas fornecem detalhes mais completos, incluindo \`duedate\` (timestamp Unix). Converta o \`duedate\` usando \`datetime_helper\` para comparações.
 
-
 Estilo de Comunicação (Português de Portugal):
   -   Linguagem: Português de Portugal.
   -   Tom: Informal e prestável, pode usar humor apropriado para estudantes.
@@ -140,118 +165,255 @@ Exemplos a ter cuidado:
   - revisionado vs revisado
 `;
 
-  const prompt = ChatPromptTemplate.fromMessages([
-    ["system", PREFIX],
-    new MessagesPlaceholder("chat_history"),
-    ["human", "{input}"], // A pergunta do utilizador
-    // Adicionar placeholder para moodle_course_id e moodle_user_token se o prompt os usar diretamente
-    // Ex: ["system", "Contexto adicional: Curso ID {moodle_course_id}, Token Utilizador: {moodle_user_token}"],
-    // OU, melhor, passar estes valores para as tools quando são chamadas.
-    new MessagesPlaceholder("agent_scratchpad"),
-  ]);
+    const prompt = ChatPromptTemplate.fromMessages([
+      ["system", PREFIX],
+      new MessagesPlaceholder("chat_history"),
+      ["human", "{input}"],
+      new MessagesPlaceholder("agent_scratchpad"),
+    ]);
 
-  // O cliente MCP pode precisar ser instanciado aqui ou passado para as tools
-  const moodleClient = new MoodleMcpClient(MOODLE_MCP_SERVER);
+    const moodleClient = new MoodleMcpClient(MOODLE_MCP_SERVER);
 
-  const tools = [
-    new GetMoodleCoursesTool(moodleClient),
-    new GetMoodleCourseContentsTool(moodleClient),
-    new FetchActivityContentTool(moodleClient),
-    new GetActivityDetailsTool(moodleClient),
-    new GetPageModuleContentTool(moodleClient),
-    new GetResourceFileContentTool(moodleClient),
-    new GetCourseActivitiesTool(moodleClient),
-    new DateTimeHelperTool(),
-    // TODO: Continuar a adicionar ideias
-  ];
+    const tools = [
+      new GetMoodleCoursesTool(moodleClient),
+      new GetMoodleCourseContentsTool(moodleClient),
+      new FetchActivityContentTool(moodleClient),
+      new GetActivityDetailsTool(moodleClient),
+      new GetPageModuleContentTool(moodleClient),
+      new GetResourceFileContentTool(moodleClient),
+      new GetCourseActivitiesTool(moodleClient),
+      new DateTimeHelperTool(),
+    ];
 
-  const agent = await createToolCallingAgent({ llm: model, tools, prompt });
-  agentExecutorInstance = new AgentExecutor({ agent, tools, verbose: true });
+    const agent = await createToolCallingAgent({ llm: model, tools, prompt });
 
-  console.log("Agente LangChain inicializado.");
-  return agentExecutorInstance;
-}
+    this.agentExecutor = new AgentExecutor({
+      agent,
+      tools,
+      verbose: false, // DESATIVAR verbose original
+      callbacks: [this.monitor], // USAR monitor customizado
+    });
 
-// Função a ser chamada pela sua WebApp
-export async function invokeAgent(params: any) {
-  const executor = await initializeAgent(); // Garante que o agente está inicializado
-
-  let augmentedInput = params.input;
-  if (params.moodle_course_id) {
-    // Pode ser mais subtil ou direto, dependendo do que funciona melhor
-    augmentedInput = `Referente à disciplina com ID ${params.moodle_course_id}: ${params.input}`;
-    // Ou:
-    // augmentedInput = `${params.input}\n(Nota: Esta pergunta é sobre a disciplina com ID ${params.moodle_course_id})`;
-    console.log(
-      `[Agent Service] Input aumentado para o LLM: "${augmentedInput}"`
-    );
+    console.log("🤖 Agente LangChain inicializado com monitorização avançada.");
+    return this.agentExecutor;
   }
 
-  const invokeParams = {
-    input: augmentedInput,
-    chat_history: params.chat_history,
-    // Se o prompt espera estas variáveis diretamente:
-    // moodle_course_id: params.moodle_course_id,
-    // moodle_user_token: params.moodle_user_token,
-  };
+  async invoke(params: any) {
+    const executor = await this.initialize();
 
-  console.log(
-    `[Agent Service] Invocando agentExecutor com input (final): "${invokeParams.input}" e chat_history.`
-  );
-  console.log(
-    `[Agent Service] Passando para configurable: moodle_user_token=${params.moodle_user_token}, moodle_course_id=${params.moodle_course_id}`
-  );
+    let augmentedInput = params.input;
+    if (params.moodle_course_id) {
+      augmentedInput = `Referente à disciplina com ID ${params.moodle_course_id}: ${params.input}`;
+      console.log(
+        `[Agent Service] Input aumentado: "${augmentedInput.substring(
+          0,
+          100
+        )}..."`
+      );
+    }
 
-  const result = await executor.invoke(invokeParams, {
-    configurable: {
-      moodle_user_token: params.moodle_user_token,
-      moodle_course_id: params.moodle_course_id, // Ainda útil para as tools confirmarem ou usarem diretamente
-    },
-  });
-  return result;
+    const invokeParams = {
+      input: augmentedInput,
+      chat_history: params.chat_history,
+    };
+
+    console.log(`[Agent Service] Invocando agentExecutor...`);
+    console.log(
+      `[Agent Service] Token: ${
+        params.moodle_user_token ? "presente" : "ausente"
+      }, Course ID: ${params.moodle_course_id || "N/A"}`
+    );
+
+    const startTime = Date.now();
+
+    try {
+      const result = await executor.invoke(invokeParams, {
+        configurable: {
+          moodle_user_token: params.moodle_user_token,
+          moodle_course_id: params.moodle_course_id,
+        },
+        callbacks: [this.monitor], // Importante: monitor também aqui
+      });
+
+      // Registar métricas de performance
+      const executionTime = Date.now() - startTime;
+      this.performanceMonitor.recordMetric("execution_time", executionTime);
+      this.performanceMonitor.recordMetric(
+        "tools_used",
+        this.monitor.getStats().toolCalls.length
+      );
+
+      // Log estruturado opcional
+      if (process.env.EXPORT_AGENT_LOGS === "true") {
+        const logs = this.monitor.exportLogs();
+        console.log("📋 AGENT_EXECUTION_LOG:", JSON.stringify(logs, null, 2));
+      }
+
+      return result;
+    } catch (error: any) {
+      console.error("💥 [AgentManager] Erro durante execução:", error.message);
+
+      // Registar erro nas métricas
+      this.performanceMonitor.recordMetric("errors", 1);
+
+      throw error;
+    }
+  }
+
+  // Métodos utilitários
+  getMonitor() {
+    return this.monitor;
+  }
+
+  getPerformanceMonitor() {
+    return this.performanceMonitor;
+  }
+
+  getStats() {
+    return {
+      execution: this.monitor.getStats(),
+      performance: this.performanceMonitor.getMetricSummary(),
+    };
+  }
+
+  generateDashboard() {
+    const summary = this.performanceMonitor.getMetricSummary();
+
+    console.log("\n📈 DASHBOARD DO AGENTE MOODLE");
+    console.log("============================");
+
+    if (Object.keys(summary).length === 0) {
+      console.log("📊 Ainda não há dados suficientes para mostrar métricas.");
+      console.log("============================\n");
+      return;
+    }
+
+    Object.entries(summary).forEach(([metric, data]: [string, any]) => {
+      const displayName = metric.replace("_", " ").toUpperCase();
+      console.log(`\n${displayName}:`);
+      console.log(`  📊 Execuções: ${data.count}`);
+
+      if (metric.includes("time")) {
+        console.log(`  ⏱️  Média: ${Math.round(data.average)}ms`);
+        console.log(`  ⚡ Min/Max: ${data.min}ms / ${data.max}ms`);
+      } else {
+        console.log(`  📈 Média: ${data.average.toFixed(2)}`);
+        console.log(`  📉 Min/Max: ${data.min} / ${data.max}`);
+      }
+
+      if (data.recent && data.recent.length > 0) {
+        const recentStr = metric.includes("time")
+          ? data.recent.map((v: number) => `${v}ms`).join(", ")
+          : data.recent.join(", ");
+        console.log(`  📋 Recentes: [${recentStr}]`);
+      }
+    });
+
+    console.log("\n============================\n");
+  }
+
+  resetMetrics() {
+    this.performanceMonitor.reset();
+    console.log("🔄 Métricas reiniciadas");
+  }
 }
 
-// Se este ficheiro for corrido diretamente (node build/src/agent/index.js), pode iniciar o readline para testes locais
+// FUNÇÕES EXPORTADAS - COMPATIBILIDADE COM O TEU CÓDIGO ATUAL
+export async function invokeAgent(params: any) {
+  const agentManager = AgentManager.getInstance();
+  return await agentManager.invoke(params);
+}
+
+export function getAgentMetrics() {
+  const agentManager = AgentManager.getInstance();
+  return agentManager.getStats();
+}
+
+export function showAgentDashboard() {
+  const agentManager = AgentManager.getInstance();
+  agentManager.generateDashboard();
+}
+
+export function resetAgentMetrics() {
+  const agentManager = AgentManager.getInstance();
+  agentManager.resetMetrics();
+}
+
+// MODO DE TESTE LOCAL - ADAPTADO PARA USAR AGENTMANAGER
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  // Verifica se é o módulo principal
-  console.log("Agente LangChain a correr em modo de teste local (readline).");
-  initializeAgent().then(() => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+  console.log("🧪 Agente em modo de teste com monitorização avançada");
 
-    const chat_history: Array<HumanMessage | AIMessage> = [];
-    rl.setPrompt("User: ");
-    rl.prompt();
+  AgentManager.getInstance()
+    .initialize()
+    .then(() => {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
 
-    rl.on("line", async (input) => {
-      try {
-        console.log(`\n[Agent Loop] Invoking agent with input: "${input}"`);
-        const response = await agentExecutorInstance.invoke(
-          {
+      const chat_history: Array<HumanMessage | AIMessage> = [];
+      let executionCount = 0;
+
+      rl.setPrompt("User: ");
+      rl.prompt();
+
+      rl.on("line", async (input) => {
+        if (input.toLowerCase() === "dashboard") {
+          showAgentDashboard();
+          rl.prompt();
+          return;
+        }
+
+        if (input.toLowerCase() === "reset") {
+          resetAgentMetrics();
+          rl.prompt();
+          return;
+        }
+
+        if (input.toLowerCase() === "stats") {
+          console.log(JSON.stringify(getAgentMetrics(), null, 2));
+          rl.prompt();
+          return;
+        }
+
+        try {
+          console.log(`\n[Agent Loop] Processando: "${input}"`);
+
+          const response = await invokeAgent({
             input: input,
             chat_history: chat_history,
-          },
-          {
-            configurable: {
-              moodle_user_token: process.argv[2],
-              moodle_course_id: Number(process.argv[3]),
-            },
+            moodle_user_token: process.argv[2],
+            moodle_course_id: process.argv[3]
+              ? Number(process.argv[3])
+              : undefined,
+          });
+
+          console.log("\n🤖 Agent Output:", response.output);
+
+          chat_history.push(new HumanMessage(input));
+          chat_history.push(new AIMessage(response.output));
+
+          executionCount++;
+
+          // Mostrar dashboard a cada 5 execuções
+          if (executionCount % 5 === 0) {
+            console.log(`\n📊 Dashboard após ${executionCount} execuções:`);
+            showAgentDashboard();
           }
-        );
+        } catch (e: any) {
+          console.error("\n💥 [Agent Loop] Erro:", e.message);
+          chat_history.push(
+            new AIMessage(`Desculpa, ocorreu um erro: ${e.message}`)
+          );
+        }
 
-        console.log("\nAgent Output: ", response.output);
+        rl.prompt();
+      });
 
-        chat_history.push(new HumanMessage(input));
-        chat_history.push(new AIMessage(response.output));
-      } catch (e: any) {
-        console.error("\n[Agent Loop] Error during agent invocation:", e);
-        chat_history.push(
-          new AIMessage(`Sorry, I encountered an error: ${e.message}`)
-        );
-      }
-      rl.prompt();
+      console.log("\n📝 Comandos especiais:");
+      console.log("  - 'dashboard' - Mostrar métricas");
+      console.log("  - 'reset' - Reiniciar métricas");
+      console.log("  - 'stats' - Ver estatísticas detalhadas");
+      console.log("  - Ctrl+C - Sair\n");
     });
-  });
 }
