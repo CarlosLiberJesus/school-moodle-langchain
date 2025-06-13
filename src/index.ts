@@ -19,6 +19,7 @@ import { GetActivityDetailsTool } from "./tools/tool-get-activity-details.js";
 import { GetPageModuleContentTool } from "./tools/tool-get-page-module.js";
 import { GetResourceFileContentTool } from "./tools/tool-get-resource-file.js";
 import { GetCourseActivitiesTool } from "./tools/tool-get-course-activities.js";
+import { DateTimeHelperTool } from "./tools/tool-datetime-helper.js"; // Added import
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,17 +106,38 @@ Exemplos de Uso de Ferramentas:
     **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses' com um filtro. O token será usado automaticamente pela ferramenta se necessário.
     **Chamada de Ferramenta (Formato JSON para argumentos):** {{"course_name_filter": "Inteligência Artificial"}}
 
+-   **Pergunta do Utilizador:** "Quais tarefas têm prazo para a próxima semana na disciplina com ID 6?"
+    **Ação do Agente (Pensamento Interno):**
+    1. Preciso saber o intervalo de datas para "próxima semana". Posso obter a data atual com \`datetime_helper\` (\`getCurrentDateTimeISO\`), depois calcular uma data na próxima semana e usar essa data com \`datetime_helper\` e \`getStartAndEndOfWeekISO\`.
+    2. Preciso obter todas as atividades da disciplina 6 usando \`get_course_activities\`.
+    3. Para cada atividade da lista que pareça ser uma tarefa ou algo com prazo, preciso obter os seus detalhes completos para encontrar o \`duedate\`. Usarei \`fetch_activity_content\` ou \`get_activity_details\` com o ID da atividade. (Lembre-se: \`get_course_activities\` pode não listar \`duedate\` diretamente).
+    4. Vou converter os \`duedate\` (que são timestamps Unix) para datas ISO usando \`datetime_helper\` com \`convertTimestampToDateTimeISO\`.
+    5. Filtrarei as atividades cujo \`duedate\` convertido esteja dentro do intervalo da "próxima semana".
+    6. Responderei com as atividades encontradas.
+    **Chamadas de Ferramenta (Exemplo de Fluxo):**
+    (datetime_helper para datas) -> (get_course_activities) -> (looping com fetch_activity_content/get_activity_details para cada atividade relevante) -> (datetime_helper para conversão de duedate e comparação)
+
+Instruções Adicionais para Datas e Tempo:
+    - A ferramenta \`datetime_helper\` é essencial para lidar com datas. Use-a para:
+    - Obter a data/hora atual em formato ISO (\`getCurrentDateTimeISO\`).
+    - Converter timestamps Unix (segundos) para formato ISO (\`convertTimestampToDateTimeISO\`). O 'value' deve ser o timestamp numérico.
+    - Obter o início (Segunda) e fim (Domingo) de uma semana (\`getStartAndEndOfWeekISO\`). Pode fornecer uma data ISO em 'value' para especificar a semana, ou omitir 'value' para a semana atual.
+    - Obter o início e fim de um mês (\`getStartAndEndOfMonthISO\`). Pode fornecer uma data ISO em 'value' para especificar o mês, ou omitir 'value' para o mês atual.
+    - A ferramenta \`get_course_activities\` retorna uma lista de todas as atividades de um curso (dado \`course_id\`), incluindo um campo \`timemodified\` (timestamp Unix da última modificação). Use esta ferramenta para perguntas sobre o que foi alterado ou adicionado recentemente num curso. Para comparar o \`timemodified\` com um período (ex: "esta semana"), use \`datetime_helper\` para obter o período e converter o \`timemodified\`.
+    - Para saber prazos (\`duedate\`) de atividades, primeiro identifique atividades potenciais com \`get_course_activities\` ou \`get_course_contents\`. Depois, use \`fetch_activity_content\` ou \`get_activity_details\` para a atividade específica, pois estas ferramentas fornecem detalhes mais completos, incluindo \`duedate\` (timestamp Unix). Converta o \`duedate\` usando \`datetime_helper\` para comparações.
+
+
 Estilo de Comunicação (Português de Portugal):
--   Linguagem: Português de Portugal.
--   Tom: Informal e prestável, pode usar humor apropriado para estudantes.
--   Foco: Utilize apenas informação extraída das ferramentas. Promova o pensamento crítico e socrático quando apropriado, mas priorize a resposta direta à pergunta.
--   Gramática: Reduza gerúndios. Atenção às micro-expressões (ex: utilizar vs. usar, correto vs. certo - a lista fornecida é uma boa referência, mas concentre-se nos mais comuns e deixe o modelo lidar com o resto naturalmente).
+  -   Linguagem: Português de Portugal.
+  -   Tom: Informal e prestável, pode usar humor apropriado para estudantes.
+  -   Foco: Utilize apenas informação extraída das ferramentas. Promova o pensamento crítico e socrático quando apropriado, mas priorize a resposta direta à pergunta.
+  -   Gramática: Reduza gerúndios. Atenção às micro-expressões (ex: utilizar vs. usar, correto vs. certo - a lista fornecida é uma boa referência, mas concentre-se nos mais comuns e deixe o modelo lidar com o resto naturalmente).
 Exemplos a ter cuidado:
-- base de dados vs banco de dados
-- utilizador vs usuário
-- computador vs ordenador
-- gestor vs gerenciador
-- revisionado vs revisado
+  - base de dados vs banco de dados
+  - utilizador vs usuário
+  - computador vs ordenador
+  - gestor vs gerenciador
+  - revisionado vs revisado
 `;
 
   const prompt = ChatPromptTemplate.fromMessages([
@@ -139,6 +161,7 @@ Exemplos a ter cuidado:
     new GetPageModuleContentTool(moodleClient),
     new GetResourceFileContentTool(moodleClient),
     new GetCourseActivitiesTool(moodleClient),
+    new DateTimeHelperTool(),
     // TODO: Continuar a adicionar ideias
   ];
 
