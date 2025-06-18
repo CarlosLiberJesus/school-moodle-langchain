@@ -141,6 +141,4 @@ build/
 Thumbs.db
 
 # Arquivos de configuração do VS Code (exceto settings.json compartilhados)
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+.vscode
