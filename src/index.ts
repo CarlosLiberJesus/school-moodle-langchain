@@ -25,15 +25,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..", "..");
 const envPath = path.join(projectRoot, ".env");
-
-const loadEnvResult = dotenv.config({ path: envPath });
-
-if (loadEnvResult.error) {
-  console.error(
-    `Config: Error loading .env from ${envPath}: ${loadEnvResult.error.message}`
-  );
-  process.exit(1);
-}
+dotenv.config({ path: envPath });
 
 export const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 export const GOOGLE_MODEL = process.env.GOOGLE_MODEL ?? "";
