@@ -3,6 +3,7 @@ import { StructuredTool } from "@langchain/core/tools";
 import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // Schema para os argumentos que o LLM vai preencher
+// moodle_token is removed from schema as it's handled by MoodleMcpClient
 const fetchActivityContentToolSchema = z.object({
   activity_id: z
     .number()
@@ -14,13 +15,13 @@ const fetchActivityContentToolSchema = z.object({
     .number()
     .optional()
     .describe(
-      "O ID do curso onde a atividade está localizada. Necessário se activity_id não for fornecido."
+      "O ID do curso onde a atividade está localizada. Necessário se activity_id não for fornecido e não estiver no contexto."
     ),
   activity_name: z
     .string()
     .optional()
     .describe(
-      "O nome (ou parte do nome) da atividade. Necessário se activity_id não for fornecido e course_id for fornecido."
+      "O nome (ou parte do nome) da atividade. Necessário se activity_id não for fornecido."
     ),
 });
 
@@ -29,77 +30,65 @@ type FetchActivityContentToolInput = z.infer<
   typeof fetchActivityContentToolSchema
 >;
 
-export class FetchActivityContentTool extends StructuredTool /*<typeof fetchActivityContentToolSchema>*/ {
-  // Removi a tipagem genérica por agora para simplificar
+export class FetchActivityContentTool extends StructuredTool<
+  typeof fetchActivityContentToolSchema // Correctly typed
+> {
   name = "fetch_activity_content";
   description =
     "Obtém o conteúdo detalhado de uma atividade específica do Moodle (descrição, texto, ficheiros associados, etc). " +
-    "Pode identificar a atividade por 'activity_id' OU por 'course_id' juntamente com 'activity_name'.";
+    "Pode identificar a atividade por 'activity_id' OU por 'course_id' (do argumento ou do contexto) juntamente com 'activity_name'.";
   schema = fetchActivityContentToolSchema;
-  moodleClient; // Deveria ter o tipo do seu MoodleMcpClient
+  moodleClient: MoodleMcpClient; // Explicitly typed
 
   constructor(moodleClient: MoodleMcpClient) {
     super();
     this.moodleClient = moodleClient;
   }
 
-  // Manter a assinatura do _call consistente com as outras tools que funcionam
-  // Se as suas outras tools usam (args, config), mantenha assim.
-  // Se elas usam (args, runManager, config), adicione runManager.
-  // Vou assumir que o config é o segundo parâmetro relevante para o token.
   async _call(
-    args: FetchActivityContentToolInput, // O tipo será inferido
-    config: Record<string, any> | undefined // Para o token
-  ) {
-    const moodleToken =
-      config?.configurable?.moodle_user_token ||
-      config?.metadata?.moodle_user_token;
+    args: FetchActivityContentToolInput,
+    config?: Record<string, any> // config is optional and used for course_id context
+  ): Promise<string> {
+    // moodle_token is no longer sourced from config. MoodleMcpClient handles it.
+
     const courseIdFromConfig =
       config?.configurable?.moodle_course_id ||
       config?.metadata?.moodle_course_id;
 
-    if (!moodleToken) {
-      return "Erro: Token do utilizador não fornecido para a ferramenta fetch_activity_content.";
-    }
-
+    // mcpServerInput will not include moodle_token here.
     const mcpServerInput: {
-      moodle_token: string;
       activity_id?: number;
       course_id?: number;
       activity_name?: string;
-    } = {
-      moodle_token: moodleToken,
-    };
+    } = {};
+
+    let determinedCourseId = args.course_id ?? courseIdFromConfig;
 
     if (args.activity_id !== undefined) {
-      // Verificar se a propriedade existe e tem valor
       mcpServerInput.activity_id = args.activity_id;
-    } else if (
-      args.course_id !== undefined &&
-      args.activity_name !== undefined
-    ) {
-      mcpServerInput.course_id = args.course_id;
-      mcpServerInput.activity_name = args.activity_name;
-    } else if (
-      courseIdFromConfig !== undefined &&
-      args.activity_name !== undefined
-    ) {
-      console.log(
-        `[FetchActivityContentTool] Usando course_id (${courseIdFromConfig}) do contexto configurável com activity_name: ${args.activity_name}`
-      );
-      mcpServerInput.course_id = courseIdFromConfig;
-      mcpServerInput.activity_name = args.activity_name;
+      if (determinedCourseId !== undefined) {
+        mcpServerInput.course_id = determinedCourseId;
+      }
+    } else if (args.activity_name !== undefined) {
+      if (determinedCourseId !== undefined) {
+        mcpServerInput.course_id = determinedCourseId;
+        mcpServerInput.activity_name = args.activity_name;
+        console.log(
+          `[FetchActivityContentTool] Usando course_id (${determinedCourseId}) e activity_name: ${args.activity_name}`
+        );
+      } else {
+        return "Erro: Para usar 'activity_name' em fetch_activity_content, um 'course_id' deve ser fornecido (via argumento ou contexto).";
+      }
     } else {
-      return "Erro: Para usar fetch_activity_content, forneça 'activity_id', OU ('course_id' E 'activity_name'). Se o curso já estiver em contexto, apenas 'activity_name' pode ser suficiente.";
+      return "Erro: Para usar fetch_activity_content, forneça 'activity_id', OU ('activity_name' e um 'course_id' implícito/explícito).";
     }
 
     console.log(
       `[FetchActivityContentTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)}`
+      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
     );
     try {
-      // Assumindo que o seu moodleClient.callMcpTool espera o nome da tool e o payload completo (incluindo o token)
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
         mcpServerInput
@@ -108,6 +97,7 @@ export class FetchActivityContentTool extends StructuredTool /*<typeof fetchActi
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
+      console.error(`[FetchActivityContentTool] Error in tool ${this.name}:`, error);
       return `Erro na ferramenta ${this.name}: ${errorMessage}`;
     }
   }

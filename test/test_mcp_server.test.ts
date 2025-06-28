@@ -15,7 +15,6 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const MOODLE_TOKEN_FOR_TESTS = process.env.MOODLE_TOKEN_FOR_TESTS ?? "";
-
 const MOODLE_MCP_SERVER = process.env.MOODLE_MCP_SERVER ?? "";
 
 if (!MOODLE_TOKEN_FOR_TESTS) {
@@ -33,7 +32,8 @@ if (!MOODLE_MCP_SERVER) {
 }
 
 async function runAllClientToolTests() {
-  const mcpClient = new MoodleMcpClient(MOODLE_MCP_SERVER);
+  // Corrigido: Passar MOODLE_TOKEN_FOR_TESTS para o construtor
+  const mcpClient = new MoodleMcpClient(MOODLE_MCP_SERVER, MOODLE_TOKEN_FOR_TESTS);
 
   // Instanciar as tools
   const getCoursesTool = new GetMoodleCoursesTool(mcpClient);
@@ -46,70 +46,53 @@ async function runAllClientToolTests() {
   // Testes
   try {
     console.log("Test 1: get_courses (sem filtro)");
-    const courses = await getCoursesTool._call(
-      { course_name_filter: null },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    // Corrigido: Removido config.configurable.moodle_user_token
+    const courses = await getCoursesTool._call({ course_name_filter: null });
     console.log("Courses:", courses);
 
     console.log("\nTest 2: get_courses (com filtro)");
-    const filteredCourses = await getCoursesTool._call(
-      {
-        course_name_filter: "Aplicações Informáticas",
-      },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    const filteredCourses = await getCoursesTool._call({
+      course_name_filter: "Aplicações Informáticas",
+    });
     console.log("Filtered Courses:", filteredCourses);
 
     console.log("\nTest 3: get_course_contents");
-    const courseContents = await getCourseContentsTool._call(
-      { course_id: 6 },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    const courseContents = await getCourseContentsTool._call({ course_id: 6 });
     console.log("Course Contents:", courseContents);
 
     console.log("\nTest 4: get_activity_details by activity_id");
-    const activityDetailsById = await getActivityDetailsTool._call(
-      { activity_id: 150 },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    const activityDetailsById = await getActivityDetailsTool._call({ activity_id: 150 });
     console.log("Activity Details (by id):", activityDetailsById);
 
     console.log("\nTest 5: get_activity_details by course_id + activity_name");
-    const activityDetailsByNames = await getActivityDetailsTool._call(
-      {
-        course_id: 6,
-        activity_name: "Componentes Fundamentais de um PC",
-      },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    const activityDetailsByNames = await getActivityDetailsTool._call({
+      course_id: 6,
+      activity_name: "Componentes Fundamentais de um PC",
+    });
     console.log("Activity Details (by names):", activityDetailsByNames);
 
     console.log("\nTest 6: fetch_activity_content by activity_id");
-    const fetchedContentById = await fetchActivityContentTool._call(
-      { activity_id: 150 },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    const fetchedContentById = await fetchActivityContentTool._call({ activity_id: 150 });
     console.log("Fetched Activity Content (by id):", fetchedContentById);
 
     console.log(
       "\nTest 7: fetch_activity_content by course_id + activity_name"
     );
-    const fetchedContentByNames = await fetchActivityContentTool._call(
-      {
-        course_id: 6,
-        activity_name: "Componentes Fundamentais de um PC",
-      },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
-    );
+    const fetchedContentByNames = await fetchActivityContentTool._call({
+      course_id: 6,
+      activity_name: "Componentes Fundamentais de um PC",
+    });
     console.log("Fetched Activity Content (by names):", fetchedContentByNames);
 
     console.log("\nTest 8: get_page_module_content");
+    // Nota: GetPageModuleContentTool e GetResourceFileContentTool não foram refatoradas para remover token dos args
+    // Se elas também precisarem de token, precisarão ser ajustadas como as outras.
+    // Por agora, o teste permanece como estava, mas pode falhar se o token for necessário e não injetado corretamente.
     const pageContent = await getPageModuleContentTool._call(
       {
         page_content_url: "https://127.0.0.1/moodle/mod/assign/view.php?id=150",
-      },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
+      }
+      // { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } } // Removido assumindo que a ferramenta será refatorada ou não precisa de token
     );
     console.log("Page Content:", pageContent);
 
@@ -118,11 +101,12 @@ async function runAllClientToolTests() {
       {
         resource_file_url:
           "https://127.0.0.1/moodle/webservice/pluginfile.php/309/mod_resource/content/7/solucoes_11_12.pdf",
-        mimetype: "application/pdf",
-      },
-      { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } }
+        mimetype: "application/pdf", // Este campo pode precisar ser moodle_token se a ferramenta o esperar
+      }
+      // { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } } // Removido
     );
     console.log("Resource File Content:", resourceContent);
+
   } catch (error) {
     console.error("Test failed:", error);
   }

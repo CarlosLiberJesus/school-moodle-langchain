@@ -19,7 +19,7 @@ import { GetActivityDetailsTool } from "./tools/tool-get-activity-details.js";
 import { GetPageModuleContentTool } from "./tools/tool-get-page-module.js";
 import { GetResourceFileContentTool } from "./tools/tool-get-resource-file.js";
 import { GetCourseActivitiesTool } from "./tools/tool-get-course-activities.js";
-import { DateTimeHelperTool } from "./tools/tool-datetime-helper.js"; // Added import
+import { DateTimeHelperTool } from "./tools/tool-datetime-helper.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,27 +37,38 @@ if (!GOOGLE_API_KEY || !GOOGLE_MODEL) {
 
 export const MOODLE_MCP_SERVER = process.env.MOODLE_MCP_SERVER ?? "";
 if (!MOODLE_MCP_SERVER) {
-  console.error(`Config: GOOGLE_API_KEY not found`);
+  console.error(`Config: MOODLE_MCP_SERVER not found`); // Corrected error message
   process.exit(1);
 }
 
 const currentFileDir = path.dirname(fileURLToPath(import.meta.url));
-
 const projectRootLogsDir = path.resolve(currentFileDir, "..", "..", "logs");
 
 setupFileLogger(projectRootLogsDir, {
-  // Passar o diretório onde os logs devem ser criados
   logLevel:
-    (process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error") || "debug", // Usar variável de ambiente se definida
-  // logFile: 'mcp_server.log' // Já é o default em logger.ts
+    (process.env.LOG_LEVEL as "debug" | "info" | "warn" | "error") || "debug",
 });
 
-let agentExecutorInstance: any; // Singleton para o executor
+// Store instances globally within the module
+let moodleClientInstance: MoodleMcpClient | undefined;
+let agentExecutorInstance: AgentExecutor | undefined;
+let currentToken: string | undefined; // To track the token used for initialization
 
-async function initializeAgent() {
-  if (agentExecutorInstance) {
+async function initializeAgent(moodleToken: string) {
+  // If agent is already initialized with the same token, return the existing instance
+  if (agentExecutorInstance && currentToken === moodleToken) {
+    console.log("Agente LangChain já inicializado com o token atual.");
     return agentExecutorInstance;
   }
+
+  if (!moodleToken) {
+    console.error("Erro: Tentativa de inicializar o agente sem um Moodle token.");
+    throw new Error("Moodle token é necessário para inicializar o agente.");
+  }
+
+  currentToken = moodleToken; // Store the token used for this initialization
+
+  console.log(`Inicializando Agente LangChain com novo token.`);
 
   const model = new ChatGoogleGenerativeAI({
     model: GOOGLE_MODEL,
@@ -74,106 +85,85 @@ Instruções Essenciais:
 3.  **Invocação da Ferramenta:**
     *   Se a ferramenta requer argumentos, forneça-os num objeto JSON válido, conforme o schema da ferramenta.
     *   Se a ferramenta pode ser chamada sem argumentos específicos (ex: para obter todos os itens), e o utilizador não especificou um filtro, chame a ferramenta com um objeto JSON vazio {{}} como argumento.
-    *   **Autenticação (Token Moodle): As ferramentas que acedem a dados específicos do Moodle usarão automaticamente a autenticação (token) fornecida para esta sessão. Você NÃO precisa de pedir o token ao utilizador nem de o incluir nos argumentos da ferramenta, a menos que o schema da ferramenta o peça explicitamente (o que é raro).**
-    *   NÃO peça confirmação ao utilizador para usar uma ferramenta ou para os seus argumentos (exceto o token, como explicado acima), a menos que a pergunta seja ambígua e necessite de clarificação ANTES de selecionar ou invocar uma ferramenta.
+    *   **Autenticação (Token Moodle): O token Moodle necessário é gerido centralmente. NÃO o inclua nos argumentos da ferramenta nem o peça ao utilizador.**
+    *   NÃO peça confirmação ao utilizador para usar uma ferramenta ou para os seus argumentos, a menos que a pergunta seja ambígua e necessite de clarificação ANTES de selecionar ou invocar uma ferramenta.
 4.  **Utilização da Observação:** Após usar uma ferramenta, receberá uma observação.
     *   Se a observação contém a informação necessária, responda diretamente à pergunta do utilizador.
     *   Se precisar de mais informações, pode usar outra ferramenta ou a mesma ferramenta com argumentos diferentes.
 5.  **Resposta Final:** Responda ao humano de forma útil e direta. Se não souber a resposta ou a informação não estiver disponível através das ferramentas, admita-o claramente. Não invente respostas.
 
 Não esquecer:
-O token de autenticação do Moodle necessário para as ferramentas é gerido automaticamente pelo sistema e injetado conforme necessário nas configurações da ferramenta. Não mencione o token nas suas respostas nem o solicite ao utilizador. Concentre-se em usar as ferramentas para obter a informação pedida.
 Como agente, tens a liberdade de usar qualquer das ferramentas, sem necessitar da confirmação do utilizador para continuar.
 
 Exemplos de Uso de Ferramentas:
 -   **Pergunta do Utilizador:** "Quais são todas as disciplinas disponíveis?"
-    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses'. Como o utilizador quer todas as disciplinas, não há filtro. O token será usado automaticamente pela ferramenta se necessário.
-    **Chamada de Ferramenta (Formato JSON para argumentos):** {{}} // Para 'get_courses'
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses'.
+    **Chamada de Ferramenta (Formato JSON para argumentos):** {{}}
 
 -   **Pergunta do Utilizador:** "Quais os conteúdos da disciplina com ID 7?"
-    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_course_contents'. O ID da disciplina é 7. O token será usado automaticamente.
-    **Chamada de Ferramenta (Formato JSON para argumentos):** {{"course_id": 7}} // Para 'get_course_contents'
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_course_contents'. O ID da disciplina é 7.
+    **Chamada de Ferramenta (Formato JSON para argumentos):** {{"course_id": 7}}
 
 -   **Pergunta do Utilizador:** "Encontra disciplinas sobre 'Inteligência Artificial'."
-    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses' com um filtro. O token será usado automaticamente pela ferramenta se necessário.
+    **Ação do Agente (Pensamento Interno):** Preciso usar a ferramenta 'get_courses' com um filtro.
     **Chamada de Ferramenta (Formato JSON para argumentos):** {{"course_name_filter": "Inteligência Artificial"}}
 
--   **Pergunta do Utilizador:** "Quais tarefas têm prazo para a próxima semana na disciplina com ID 6?"
-    **Ação do Agente (Pensamento Interno):**
-    1. Preciso saber o intervalo de datas para "próxima semana". Posso obter a data atual com \`datetime_helper\` (\`getCurrentDateTimeISO\`), depois calcular uma data na próxima semana e usar essa data com \`datetime_helper\` e \`getStartAndEndOfWeekISO\`.
-    2. Preciso obter todas as atividades da disciplina 6 usando \`get_course_activities\`.
-    3. Para cada atividade da lista que pareça ser uma tarefa ou algo com prazo, preciso obter os seus detalhes completos para encontrar o \`duedate\`. Usarei \`fetch_activity_content\` ou \`get_activity_details\` com o ID da atividade. (Lembre-se: \`get_course_activities\` pode não listar \`duedate\` diretamente).
-    4. Vou converter os \`duedate\` (que são timestamps Unix) para datas ISO usando \`datetime_helper\` com \`convertTimestampToDateTimeISO\`.
-    5. Filtrarei as atividades cujo \`duedate\` convertido esteja dentro do intervalo da "próxima semana".
-    6. Responderei com as atividades encontradas.
-    **Chamadas de Ferramenta (Exemplo de Fluxo):**
-    (datetime_helper para datas) -> (get_course_activities) -> (looping com fetch_activity_content/get_activity_details para cada atividade relevante) -> (datetime_helper para conversão de duedate e comparação)
-
 Instruções Adicionais para Datas e Tempo:
-    - A ferramenta \`datetime_helper\` é essencial para lidar com datas. Use-a para:
-    - Obter a data/hora atual em formato ISO (\`getCurrentDateTimeISO\`).
-    - Converter timestamps Unix (segundos) para formato ISO (\`convertTimestampToDateTimeISO\`). O 'value' deve ser o timestamp numérico.
-    - Obter o início (Segunda) e fim (Domingo) de uma semana (\`getStartAndEndOfWeekISO\`). Pode fornecer uma data ISO em 'value' para especificar a semana, ou omitir 'value' para a semana atual.
-    - Obter o início e fim de um mês (\`getStartAndEndOfMonthISO\`). Pode fornecer uma data ISO em 'value' para especificar o mês, ou omitir 'value' para o mês atual.
-    - A ferramenta \`get_course_activities\` retorna uma lista de todas as atividades de um curso (dado \`course_id\`), incluindo um campo \`timemodified\` (timestamp Unix da última modificação). Use esta ferramenta para perguntas sobre o que foi alterado ou adicionado recentemente num curso. Para comparar o \`timemodified\` com um período (ex: "esta semana"), use \`datetime_helper\` para obter o período e converter o \`timemodified\`.
-    - Para saber prazos (\`duedate\`) de atividades, primeiro identifique atividades potenciais com \`get_course_activities\` ou \`get_course_contents\`. Depois, use \`fetch_activity_content\` ou \`get_activity_details\` para a atividade específica, pois estas ferramentas fornecem detalhes mais completos, incluindo \`duedate\` (timestamp Unix). Converta o \`duedate\` usando \`datetime_helper\` para comparações.
-
+    - A ferramenta \`datetime_helper\` é essencial para lidar com datas.
+    - A ferramenta \`get_course_activities\` retorna uma lista de todas as atividades de um curso.
+    - Para saber prazos (\`duedate\`) de atividades, use \`fetch_activity_content\` ou \`get_activity_details\`.
 
 Estilo de Comunicação (Português de Portugal):
   -   Linguagem: Português de Portugal.
-  -   Tom: Informal e prestável, pode usar humor apropriado para estudantes.
-  -   Foco: Utilize apenas informação extraída das ferramentas. Promova o pensamento crítico e socrático quando apropriado, mas priorize a resposta direta à pergunta.
-  -   Gramática: Reduza gerúndios. Atenção às micro-expressões (ex: utilizar vs. usar, correto vs. certo - a lista fornecida é uma boa referência, mas concentre-se nos mais comuns e deixe o modelo lidar com o resto naturalmente).
-Exemplos a ter cuidado:
-  - base de dados vs banco de dados
-  - utilizador vs usuário
-  - computador vs ordenador
-  - gestor vs gerenciador
-  - revisionado vs revisado
+  -   Tom: Informal e prestável.
+  -   Foco: Utilize apenas informação extraída das ferramentas.
+  -   Gramática: Reduza gerúndios.
+Exemplos a ter cuidado: base de dados, utilizador, computador, gestor, revisionado.
 `;
 
   const prompt = ChatPromptTemplate.fromMessages([
     ["system", PREFIX],
     new MessagesPlaceholder("chat_history"),
-    ["human", "{input}"], // A pergunta do utilizador
-    // Adicionar placeholder para moodle_course_id e moodle_user_token se o prompt os usar diretamente
-    // Ex: ["system", "Contexto adicional: Curso ID {moodle_course_id}, Token Utilizador: {moodle_user_token}"],
-    // OU, melhor, passar estes valores para as tools quando são chamadas.
+    ["human", "{input}"],
     new MessagesPlaceholder("agent_scratchpad"),
   ]);
 
-  // O cliente MCP pode precisar ser instanciado aqui ou passado para as tools
-  const moodleClient = new MoodleMcpClient(MOODLE_MCP_SERVER);
+  moodleClientInstance = new MoodleMcpClient(MOODLE_MCP_SERVER, moodleToken);
 
   const tools = [
-    new GetMoodleCoursesTool(moodleClient),
-    new GetMoodleCourseContentsTool(moodleClient),
-    new FetchActivityContentTool(moodleClient),
-    new GetActivityDetailsTool(moodleClient),
-    new GetPageModuleContentTool(moodleClient),
-    new GetResourceFileContentTool(moodleClient),
-    new GetCourseActivitiesTool(moodleClient),
+    new GetMoodleCoursesTool(moodleClientInstance),
+    new GetMoodleCourseContentsTool(moodleClientInstance),
+    new FetchActivityContentTool(moodleClientInstance),
+    new GetActivityDetailsTool(moodleClientInstance),
+    new GetPageModuleContentTool(moodleClientInstance),
+    new GetResourceFileContentTool(moodleClientInstance),
+    new GetCourseActivitiesTool(moodleClientInstance),
     new DateTimeHelperTool(),
-    // TODO: Continuar a adicionar ideias
   ];
 
   const agent = await createToolCallingAgent({ llm: model, tools, prompt });
   agentExecutorInstance = new AgentExecutor({ agent, tools, verbose: true });
 
-  console.log("Agente LangChain inicializado.");
+  console.log("Agente LangChain (re)inicializado com token.");
   return agentExecutorInstance;
 }
 
-// Função a ser chamada pela sua WebApp
-export async function invokeAgent(params: any) {
-  const executor = await initializeAgent(); // Garante que o agente está inicializado
+export async function invokeAgent(params: {
+  input: string;
+  moodle_user_token: string;
+  moodle_course_id?: string; // course_id is optional at this level
+  chat_history: Array<HumanMessage | AIMessage>;
+}) {
+  if (!params.moodle_user_token) {
+    console.error("[Agent Service] Erro: Moodle user token não fornecido para invokeAgent.");
+    throw new Error("Moodle user token é obrigatório.");
+  }
+
+  const executor = await initializeAgent(params.moodle_user_token);
 
   let augmentedInput = params.input;
   if (params.moodle_course_id) {
-    // Pode ser mais subtil ou direto, dependendo do que funciona melhor
     augmentedInput = `Referente à disciplina com ID ${params.moodle_course_id}: ${params.input}`;
-    // Ou:
-    // augmentedInput = `${params.input}\n(Nota: Esta pergunta é sobre a disciplina com ID ${params.moodle_course_id})`;
     console.log(
       `[Agent Service] Input aumentado para o LLM: "${augmentedInput}"`
     );
@@ -182,32 +172,38 @@ export async function invokeAgent(params: any) {
   const invokeParams = {
     input: augmentedInput,
     chat_history: params.chat_history,
-    // Se o prompt espera estas variáveis diretamente:
-    // moodle_course_id: params.moodle_course_id,
-    // moodle_user_token: params.moodle_user_token,
   };
 
   console.log(
     `[Agent Service] Invocando agentExecutor com input (final): "${invokeParams.input}" e chat_history.`
   );
-  console.log(
-    `[Agent Service] Passando para configurable: moodle_user_token=${params.moodle_user_token}, moodle_course_id=${params.moodle_course_id}`
-  );
 
+  // moodle_user_token and moodle_course_id are no longer passed in configurable for token management here
+  // course_id is now part of the augmentedInput if provided
   const result = await executor.invoke(invokeParams, {
     configurable: {
-      moodle_user_token: params.moodle_user_token,
-      moodle_course_id: params.moodle_course_id, // Ainda útil para as tools confirmarem ou usarem diretamente
-    },
+      // Pass other session-specific configurations if any, but not the token for tools
+      moodle_course_id: params.moodle_course_id, // Still can be useful for some non-tool related configurations or logging
+    }
   });
   return result;
 }
 
-// Se este ficheiro for corrido diretamente (node build/src/agent/index.js), pode iniciar o readline para testes locais
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  // Verifica se é o módulo principal
+  const cliMoodleToken = process.argv[2];
+  const cliCourseId = process.argv[3]; // Optional course ID for context
+
+  if (!cliMoodleToken) {
+    console.error(
+      "Erro: Token Moodle não fornecido como primeiro argumento da linha de comando."
+    );
+    console.log("Uso: node build/src/index.js <SEU_MOODLE_TOKEN> [ID_CURSO_OPCIONAL]");
+    process.exit(1);
+  }
+
   console.log("Agente LangChain a correr em modo de teste local (readline).");
-  initializeAgent().then(() => {
+
+  initializeAgent(cliMoodleToken).then((executor) => { // Initialize with token from CLI
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -219,31 +215,39 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
     rl.on("line", async (input) => {
       try {
-        console.log(`\n[Agent Loop] Invoking agent with input: "${input}"`);
-        const response = await agentExecutorInstance.invoke(
+        let augmentedInput = input;
+        if (cliCourseId) {
+          augmentedInput = `Referente à disciplina com ID ${cliCourseId}: ${input}`;
+        }
+        console.log(`\n[Agent Loop] Invoking agent with input: "${augmentedInput}"`);
+
+        // Ensure agent is initialized with the correct token (should be already, but good for safety if token could change)
+        // await initializeAgent(cliMoodleToken); // This might be redundant if token doesn't change per line
+
+        const response = await agentExecutorInstance!.invoke( // agentExecutorInstance should be defined
           {
-            input: input,
+            input: augmentedInput,
             chat_history: chat_history,
           },
           {
-            configurable: {
-              moodle_user_token: process.argv[2],
-              moodle_course_id: Number(process.argv[3]),
-            },
+            configurable: { // Pass course_id if available, token is handled by MoodleMcpClient
+              moodle_course_id: cliCourseId ? Number(cliCourseId) : undefined,
+            }
           }
         );
 
         console.log("\nAgent Output: ", response.output);
 
-        chat_history.push(new HumanMessage(input));
+        chat_history.push(new HumanMessage(input)); // Store original input in history
         chat_history.push(new AIMessage(response.output));
       } catch (e: any) {
         console.error("\n[Agent Loop] Error during agent invocation:", e);
-        chat_history.push(
-          new AIMessage(`Sorry, I encountered an error: ${e.message}`)
-        );
+        // Avoid adding error to history as AIMessage if it's a system error
       }
       rl.prompt();
     });
+  }).catch(error => {
+    console.error("Falha ao inicializar o agente para o modo de teste local:", error);
+    process.exit(1);
   });
 }

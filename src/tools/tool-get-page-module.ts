@@ -3,14 +3,12 @@ import { StructuredTool } from "@langchain/core/tools";
 import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // 1. Defina o schema Zod
+// moodle_token is removed as it's handled by MoodleMcpClient
 const getPageModuleContentToolSchema = z.object({
-  /* moodle_token: z
-    .string()
-    .describe("O token de autenticação do utilizador Moodle."), */
   page_content_url: z
     .string()
     .describe("URL direta para o conteúdo do módulo 'Page' do Moodle."),
-  // .url()
+  // .url() // Zod's .url() can be strict, consider if simple string is enough
 });
 
 // 2. Tipo do input
@@ -34,33 +32,28 @@ export class GetPageModuleContentTool extends StructuredTool<
 
   async _call(
     args: GetPageModuleContentToolInput,
-    config?: Record<string, any>
+    config?: Record<string, any> // config is kept for Langchain compatibility but not used for token
   ): Promise<string> {
-    const moodleToken =
-      config?.configurable?.moodle_user_token ||
-      config?.metadata?.moodle_user_token;
+    // moodle_token is no longer sourced from config. MoodleMcpClient handles it.
 
-    if (!moodleToken) {
-      return "Erro: Token do utilizador não fornecido para a ferramenta.";
-    }
     try {
+      // Basic URL validation, can be enhanced if needed
       new URL(args.page_content_url);
     } catch (e) {
       return "Erro: O page_content_url fornecido não é um URL válido.";
     }
 
+    // mcpServerInput will not include moodle_token here.
     const mcpServerInput: {
-      moodle_token: string;
       page_content_url: string;
     } = {
-      moodle_token: moodleToken,
       page_content_url: args.page_content_url,
     };
 
     console.log(
       `[GetPageModuleContentTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)}`
+      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
     );
     try {
       const resultString = await this.moodleClient.callMcpTool(
@@ -71,6 +64,7 @@ export class GetPageModuleContentTool extends StructuredTool<
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
+      console.error(`[GetPageModuleContentTool] Error in tool ${this.name}:`, error);
       return `Erro na ferramenta ${this.name}: ${errorMessage}`;
     }
   }

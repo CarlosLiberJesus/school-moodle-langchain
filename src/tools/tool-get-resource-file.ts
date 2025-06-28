@@ -3,10 +3,8 @@ import { StructuredTool } from "@langchain/core/tools";
 import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // 1. Defina o schema Zod
+// moodle_token is removed as it's handled by MoodleMcpClient
 const getResourceFileContentToolSchema = z.object({
-  /* moodle_token: z
-    .string()
-    .describe("O token de autenticação do utilizador Moodle."), */
   resource_file_url: z
     .string()
     .describe("URL direta para o conteúdo do ficheiro 'resource' do Moodle."),
@@ -36,27 +34,22 @@ export class GetResourceFileContentTool extends StructuredTool<
 
   async _call(
     args: GetResourceFileContentToolInput,
-    config?: Record<string, any>
+    config?: Record<string, any> // config is kept for Langchain compatibility but not used for token
   ): Promise<string> {
-    const moodleToken =
-      config?.configurable?.moodle_user_token ||
-      config?.metadata?.moodle_user_token;
-    if (!moodleToken) {
-      return "Erro: Token do utilizador não fornecido para a ferramenta.";
-    }
+    // moodle_token is no longer sourced from config. MoodleMcpClient handles it.
 
     try {
+      // Basic URL validation
       new URL(args.resource_file_url);
     } catch (e) {
       return "Erro: O resource_file_url fornecido não é um URL válido.";
     }
 
+    // mcpServerInput will not include moodle_token here.
     const mcpServerInput: {
-      moodle_token: string;
       resource_file_url: string;
       mimetype: string;
     } = {
-      moodle_token: moodleToken,
       resource_file_url: args.resource_file_url,
       mimetype: args.mimetype,
     };
@@ -64,7 +57,7 @@ export class GetResourceFileContentTool extends StructuredTool<
     console.log(
       `[GetResourceFileContentTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)}`
+      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
     );
     try {
       const resultString = await this.moodleClient.callMcpTool(
@@ -75,6 +68,7 @@ export class GetResourceFileContentTool extends StructuredTool<
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
+      console.error(`[GetResourceFileContentTool] Error in tool ${this.name}:`, error);
       return `Erro na ferramenta ${this.name}: ${errorMessage}`;
     }
   }

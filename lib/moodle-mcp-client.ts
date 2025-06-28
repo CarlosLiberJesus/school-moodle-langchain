@@ -6,16 +6,35 @@ import { Buffer } from "buffer";
 // Idealmente, isto estaria num ficheiro separado, e.g., 'mcp-client.ts'
 export class MoodleMcpClient {
   private readonly mcpServerUrlBase: string;
+  private readonly moodleToken: string; // Store Moodle token
+  private rpcId: number = 1; // For unique JSON-RPC request IDs
 
-  constructor(mcpServerUrlBase: string) {
+  constructor(mcpServerUrlBase: string, moodleToken: string) { // Accept moodleToken in constructor
     this.mcpServerUrlBase = mcpServerUrlBase;
+    this.moodleToken = moodleToken; // Store it
+    if (!moodleToken) {
+      console.warn(
+        `[MyMoodleMcpClient] Warning: Moodle token was not provided at initialization.`
+      );
+    }
     console.log(
       `[MyMoodleMcpClient] Initialized for HTTP communication with MCP server at: ${this.mcpServerUrlBase}`
     );
   }
 
   public async callMcpTool(toolName: string, input: any): Promise<string> {
-    const payload = JSON.stringify({ name: toolName, input: input });
+    // Combine the stored Moodle token with other input parameters
+    const paramsWithToken = {
+      moodle_token: this.moodleToken,
+      ...input,
+    };
+
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id: this.rpcId++,
+      method: toolName,
+      params: paramsWithToken, // Use combined params
+    });
 
     const url = new URL(this.mcpServerUrlBase + "/mcp"); // Assuming /mcp is the fixed endpoint path
     const hostname = url.hostname;
@@ -33,13 +52,15 @@ export class MoodleMcpClient {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
         "Content-Length": Buffer.byteLength(payload),
       },
     };
 
+    // Log the input without the token for brevity, or consider logging the token partially for debugging if necessary
     console.log(
-      `[MyMoodleMcpClient] Calling MCP tool via HTTP POST: ${toolName} with input:`,
-      input
+      `[MyMoodleMcpClient] Calling MCP tool via HTTP POST: ${toolName} with input (token injected):`,
+      input // Log original input, token is injected into paramsWithToken
     );
 
     return new Promise<string>((resolve, reject) => {
@@ -67,23 +88,29 @@ export class MoodleMcpClient {
                 `[MyMoodleMcpClient] Parsed response from MCP tool ${toolName}:`,
                 response
               );
-              if (
-                response.content &&
-                response.content[0] &&
-                response.content[0].type === "text"
-              ) {
-                resolve(response.content[0].text);
-              } else {
+              if (response.result && response.result.content && response.result.content[0] && response.result.content[0].type === 'text') {
+                resolve(response.result.content[0].text);
+              } else if (response.result) {
+                if (typeof response.result === 'string') {
+                    resolve(response.result);
+                } else {
+                    resolve(JSON.stringify(response.result));
+                }
+              } else if (response.error) { // Handle JSON-RPC errors
+                console.error(`[MyMoodleMcpClient] JSON-RPC Error from ${toolName}: ${JSON.stringify(response.error)}`);
+                reject(new Error(`Error from ${toolName}: ${response.error.message || JSON.stringify(response.error)}`));
+              }
+              else {
                 reject(
                   new Error(
-                    `[MyMoodleMcpClient] Unexpected response format from MCP tool ${toolName}`
+                    `[MyMoodleMcpClient] Unexpected response format from MCP tool ${toolName}. Response: ${JSON.stringify(response)}`
                   )
                 );
               }
             } catch (e: any) {
               reject(
                 new Error(
-                  `[MyMoodleMcpClient] Error parsing JSON response: ${e.message}`
+                  `[MyMoodleMcpClient] Error parsing JSON response: ${e.message}. Raw data: ${data}`
                 )
               );
             }
