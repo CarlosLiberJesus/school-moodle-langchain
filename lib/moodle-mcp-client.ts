@@ -1,117 +1,127 @@
-import { spawn, ChildProcess } from "child_process";
-import path from "path";
-import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
+import http from "http";
+import { Buffer } from "buffer";
+// import { CallToolRequest } from "@modelcontextprotocol/sdk/types.js"; // Not strictly needed for HTTP
 
 // --- INÍCIO DO CÓDIGO DO McpClientManager (simplificado e integrado aqui por agora) ---
 // Idealmente, isto estaria num ficheiro separado, e.g., 'mcp-client.ts'
 export class MoodleMcpClient {
-  private client: McpClient | null = null;
-  private mcpServerProcess: ChildProcess | null = null;
-  private readonly mcpServerScriptPath: string;
+  private readonly mcpServerUrlBase: string;
 
-  constructor(absolutePath: string) {
-    // Constrói o caminho absoluto para o script do mcp_server.js
-    // Assume que este script do agente está na raiz do teu novo projeto de agente,
-    // e o school-moodle-mcp é uma pasta irmã ou num caminho conhecido.
-    // AJUSTA ESTE CAMINHO CONFORME A TUA ESTRUTURA!
-
-    this.mcpServerScriptPath = path.resolve(absolutePath);
+  constructor(mcpServerUrlBase: string) {
+    this.mcpServerUrlBase = mcpServerUrlBase;
     console.log(
-      `[MyMoodleMcpClient] MCP Server script path: ${this.mcpServerScriptPath}`
+      `[MyMoodleMcpClient] Initialized for HTTP communication with MCP server at: ${this.mcpServerUrlBase}`
     );
-  }
-
-  private async startAndConnect(): Promise<McpClient> {
-    if (this.client) {
-      return this.client;
-    }
-
-    console.log("[MyMoodleMcpClient] Spawning MCP Server process...");
-    // Assume que o teu mcp_server.js compilado está em 'dist/src/mcp_server.js'
-    // dentro da pasta do projeto school-moodle-mcp
-    this.mcpServerProcess = spawn("node", [this.mcpServerScriptPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    this.mcpServerProcess.stderr?.on("data", (data) => {
-      console.error(`[MCP Server STDERR] ${data.toString().trim()}`);
-    });
-    this.mcpServerProcess.on("exit", (code) => {
-      console.warn(
-        `[MyMoodleMcpClient] MCP Server process exited with code ${code}`
-      );
-      this.client = null;
-    });
-    this.mcpServerProcess.on("error", (err) => {
-      console.error(
-        "[MyMoodleMcpClient] Failed to start MCP Server process:",
-        err
-      );
-      this.client = null;
-      throw err;
-    });
-
-    if (!this.mcpServerProcess.stdin || !this.mcpServerProcess.stdout) {
-      throw new Error(
-        "[MyMoodleMcpClient] Failed to get stdin/stdout for MCP Server process"
-      );
-    }
-
-    const transport = new StdioClientTransport({
-      command: "node",
-      args: [this.mcpServerScriptPath],
-    });
-
-    this.client = new McpClient({ name: "MyClient", version: "1.0.0" });
-
-    console.log("[MyMoodleMcpClient] Connecting client to transport...");
-    await this.client.connect(transport);
-    console.log("[MyMoodleMcpClient] MCP Client connected.");
-    return this.client;
   }
 
   public async callMcpTool(toolName: string, input: any): Promise<string> {
-    const mcpClient = await this.startAndConnect();
-    const requestParams: CallToolRequest["params"] = {
-      name: toolName,
-      input: input,
+    const payload = JSON.stringify({ name: toolName, input: input });
+
+    const url = new URL(this.mcpServerUrlBase + "/mcp"); // Assuming /mcp is the fixed endpoint path
+    const hostname = url.hostname;
+    const port = url.port
+      ? parseInt(url.port, 10)
+      : url.protocol === "https:"
+      ? 443
+      : 80;
+    const path = url.pathname; // This will be /mcp
+
+    const options = {
+      hostname: hostname,
+      port: port,
+      path: path,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+      },
     };
 
     console.log(
-      `[MyMoodleMcpClient] Calling MCP tool: ${toolName} with input:`,
+      `[MyMoodleMcpClient] Calling MCP tool via HTTP POST: ${toolName} with input:`,
       input
     );
-    const response = (await mcpClient.callTool(requestParams)) as {
-      content?: Array<{ type: string; text: string }>;
-    };
-    console.log(
-      `[MyMoodleMcpClient] Received response from MCP tool ${toolName}:`,
-      response
-    );
 
-    if (
-      response.content &&
-      response.content[0] &&
-      response.content[0].type === "text"
-    ) {
-      return response.content[0].text; // Retorna a string JSON que o MCP Server envia
-    }
-    throw new Error(
-      `[MyMoodleMcpClient] Unexpected response format from MCP tool ${toolName}`
-    );
+    return new Promise<string>((resolve, reject) => {
+      const req = http.request(options, (res) => {
+        req.setTimeout(30000, () => {
+          // 30 seconds timeout
+          req.destroy(
+            new Error(
+              `[MyMoodleMcpClient] Request to MCP tool ${toolName} timed out after 30 seconds`
+            )
+          );
+        });
+        let data = "";
+        res.on("data", (chunk) => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              console.log(
+                `[MyMoodleMcpClient] Raw response from MCP server: ${data}`
+              );
+              const response = JSON.parse(data);
+              console.log(
+                `[MyMoodleMcpClient] Parsed response from MCP tool ${toolName}:`,
+                response
+              );
+              if (
+                response.content &&
+                response.content[0] &&
+                response.content[0].type === "text"
+              ) {
+                resolve(response.content[0].text);
+              } else {
+                reject(
+                  new Error(
+                    `[MyMoodleMcpClient] Unexpected response format from MCP tool ${toolName}`
+                  )
+                );
+              }
+            } catch (e: any) {
+              reject(
+                new Error(
+                  `[MyMoodleMcpClient] Error parsing JSON response: ${e.message}`
+                )
+              );
+            }
+          } else {
+            console.error(
+              `[MyMoodleMcpClient] HTTP error! status: ${res.statusCode} for tool ${toolName}. Response data: ${data}`
+            );
+            reject(
+              new Error(
+                `[MyMoodleMcpClient] HTTP error! status: ${res.statusCode} while calling ${toolName}. Check logs for full response.`
+              )
+            );
+          }
+        });
+      });
+
+      req.on("error", (e) => {
+        console.error(
+          `[MyMoodleMcpClient] Network or request error for MCP tool ${toolName}:`,
+          e
+        );
+        reject(
+          new Error(
+            `[MyMoodleMcpClient] Network or request error calling ${toolName}: ${e.message}`
+          )
+        );
+      });
+
+      req.write(payload);
+      req.end();
+    });
   }
 
   public shutdown() {
-    if (this.client) {
-      this.client = null;
-    }
-    if (this.mcpServerProcess) {
-      console.log("[MyMoodleMcpClient] Killing MCP Server process...");
-      this.mcpServerProcess.kill();
-      this.mcpServerProcess = null;
-    }
-    console.log("[MyMoodleMcpClient] Shutdown complete.");
+    // No persistent connections to shut down for HTTP, so this can be empty.
+    // Potentially, could be used for cleanup if any resources were allocated.
+    console.log(
+      "[MyMoodleMcpClient] Shutdown for HTTP client (no action needed)."
+    );
   }
 }
