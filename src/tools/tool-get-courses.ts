@@ -35,13 +35,8 @@ export class GetMoodleCoursesTool extends StructuredTool<
     this.moodleClient = moodleClient;
   }
 
-  async _call(
-    args: GetMoodleCoursesToolInput,
-    config?: Record<string, any> // config is kept for potential future use, but moodle_user_token is not used from it here
-  ): Promise<string> {
-    // moodle_token is no longer sourced from config or args here.
-    // MoodleMcpClient will inject the token.
-
+  async _call(args: GetMoodleCoursesToolInput): Promise<string> {
+    // MoodleMcpClient irá injetar automaticamente o token
     const mcpServerInput: { course_name_filter?: string } = {};
 
     if (args.course_name_filter && args.course_name_filter.trim() !== "") {
@@ -51,18 +46,16 @@ export class GetMoodleCoursesTool extends StructuredTool<
     console.log(
       `[GetMoodleCoursesTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
+      }' with input: ${JSON.stringify(
+        mcpServerInput
+      )} (token será injetado pelo MoodleClient)`
     );
 
     try {
-      // MoodleMcpClient.callMcpTool will now add the moodle_token
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
-        mcpServerInput // Pass only the relevant args for the MCP tool's own params
+        mcpServerInput
       );
-      // Assuming resultString is the direct JSON string response for courses
-      // No parsing to specific schema here as it was returning string.
-      // If it needs to be an array of course objects, similar parsing as in GetCourseActivitiesTool would be needed.
       return resultString;
     } catch (error) {
       const errorMessage =

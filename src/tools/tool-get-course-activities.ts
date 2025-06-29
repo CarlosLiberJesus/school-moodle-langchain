@@ -2,10 +2,14 @@ import { z } from "zod";
 import { StructuredTool } from "@langchain/core/tools";
 import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
-// course_id removido do schema. Será obtido do config.
+// Schema permite course_id opcional - se não fornecido, usa o do MoodleClient
 const getCourseActivitiesToolSchema = z.object({
-  // Nenhum argumento esperado diretamente do LLM para esta tool.
-  // course_id será fornecido pelo sistema via config.
+  course_id: z
+    .number()
+    .optional()
+    .describe(
+      "ID do curso para recuperar atividades. Se não fornecido, usa o curso atual do contexto."
+    ),
 });
 
 const activitySchema = z.object({
@@ -30,7 +34,7 @@ export class GetCourseActivitiesTool extends StructuredTool<
 > {
   name = "get_course_activities";
   description =
-    "Recupera uma lista de todas as atividades para um curso específico no Moodle.";
+    "Recupera uma lista de todas as atividades para um curso específico no Moodle. Se course_id não for fornecido, usa o curso atual do contexto.";
   schema = getCourseActivitiesToolSchema;
   moodleClient: MoodleMcpClient;
 
@@ -40,28 +44,17 @@ export class GetCourseActivitiesTool extends StructuredTool<
   }
 
   async _call(
-    args: GetCourseActivitiesToolInput, // args estará vazio {}
-    config?: Record<string, any>
+    args: GetCourseActivitiesToolInput
   ): Promise<GetCourseActivitiesToolOutput | string> {
-    const course_id = config?.configurable?.moodle_course_id;
-
-    if (typeof course_id !== 'number') {
-      console.error(
-        `[GetCourseActivitiesTool] Erro: course_id não fornecido ou inválido no config. Recebido: ${course_id}`
-      );
-      return `Erro na ferramenta ${this.name}: O ID do curso (course_id) é obrigatório e deve ser um número. Verifique se o contexto do curso está definido.`;
-    }
-
-    const mcpServerInput = {
-      course_id, // course_id obtido do config
-    };
+    // Se course_id não for fornecido nos args, o MoodleClient irá injetar automaticamente
+    const mcpServerInput = args.course_id ? { course_id: args.course_id } : {};
 
     console.log(
       `[GetCourseActivitiesTool] Calling MCP tool '${
         this.name
       }' with input: ${JSON.stringify(
         mcpServerInput
-      )} (token will be injected by client, course_id from config)`
+      )} (token e course_id serão injetados pelo MoodleClient se necessário)`
     );
 
     try {

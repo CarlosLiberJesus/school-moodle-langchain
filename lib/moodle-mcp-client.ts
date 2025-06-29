@@ -4,18 +4,26 @@ import { Buffer } from "buffer";
 export class MoodleMcpClient {
   private readonly mcpServerUrlBase: string;
   private readonly moodleToken: string;
+  private readonly courseId?: number;
   private rpcId: number = 1;
 
-  constructor(mcpServerUrlBase: string, moodleToken: string) {
+  constructor(
+    mcpServerUrlBase: string,
+    moodleToken: string,
+    courseId?: number
+  ) {
     this.mcpServerUrlBase = mcpServerUrlBase;
     this.moodleToken = moodleToken;
+    this.courseId = courseId;
     if (!moodleToken) {
       console.warn(
         `[MyMoodleMcpClient] Warning: Moodle token was not provided at initialization.`
       );
     }
     console.log(
-      `[MyMoodleMcpClient] Initialized for HTTP communication with MCP server at: ${this.mcpServerUrlBase}`
+      `[MyMoodleMcpClient] Initialized for HTTP communication with MCP server at: ${
+        this.mcpServerUrlBase
+      }${courseId ? ` with course_id: ${courseId}` : ""}`
     );
   }
 
@@ -24,6 +32,11 @@ export class MoodleMcpClient {
       moodle_token: this.moodleToken,
       ...input,
     };
+
+    // Se courseId está definido e o input não tem course_id, injeta automaticamente
+    if (this.courseId && !input.course_id) {
+      paramsWithToken.course_id = this.courseId;
+    }
 
     const payload = JSON.stringify({
       jsonrpc: "2.0",

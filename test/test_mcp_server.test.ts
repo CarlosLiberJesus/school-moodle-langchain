@@ -33,7 +33,10 @@ if (!MOODLE_MCP_SERVER) {
 
 async function runAllClientToolTests() {
   // Corrigido: Passar MOODLE_TOKEN_FOR_TESTS para o construtor
-  const mcpClient = new MoodleMcpClient(MOODLE_MCP_SERVER, MOODLE_TOKEN_FOR_TESTS);
+  const mcpClient = new MoodleMcpClient(
+    MOODLE_MCP_SERVER,
+    MOODLE_TOKEN_FOR_TESTS
+  );
 
   // Instanciar as tools
   const getCoursesTool = new GetMoodleCoursesTool(mcpClient);
@@ -61,25 +64,27 @@ async function runAllClientToolTests() {
     console.log("Course Contents:", courseContents);
 
     console.log("\nTest 4: get_activity_details by activity_id");
-    const activityDetailsById = await getActivityDetailsTool._call({ activity_id: 150 });
+    const activityDetailsById = await getActivityDetailsTool._call({
+      activity_id: 150,
+    });
     console.log("Activity Details (by id):", activityDetailsById);
 
-    console.log("\nTest 5: get_activity_details by course_id + activity_name");
+    console.log("\nTest 5: get_activity_details by activity_name only");
     const activityDetailsByNames = await getActivityDetailsTool._call({
-      course_id: 6,
       activity_name: "Componentes Fundamentais de um PC",
     });
     console.log("Activity Details (by names):", activityDetailsByNames);
 
     console.log("\nTest 6: fetch_activity_content by activity_id");
-    const fetchedContentById = await fetchActivityContentTool._call({ activity_id: 150 });
+    const fetchedContentById = await fetchActivityContentTool._call({
+      activity_id: 150,
+    });
     console.log("Fetched Activity Content (by id):", fetchedContentById);
 
     console.log(
       "\nTest 7: fetch_activity_content by course_id + activity_name"
     );
     const fetchedContentByNames = await fetchActivityContentTool._call({
-      course_id: 6,
       activity_name: "Componentes Fundamentais de um PC",
     });
     console.log("Fetched Activity Content (by names):", fetchedContentByNames);
@@ -106,7 +111,6 @@ async function runAllClientToolTests() {
       // { configurable: { moodle_user_token: MOODLE_TOKEN_FOR_TESTS } } // Removido
     );
     console.log("Resource File Content:", resourceContent);
-
   } catch (error) {
     console.error("Test failed:", error);
   }

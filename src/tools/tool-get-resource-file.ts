@@ -32,16 +32,13 @@ export class GetResourceFileContentTool extends StructuredTool<
     this.moodleClient = moodleClient;
   }
 
-  async _call(
-    args: GetResourceFileContentToolInput,
-    config?: Record<string, any> // config is kept for Langchain compatibility but not used for token
-  ): Promise<string> {
+  async _call(args: GetResourceFileContentToolInput): Promise<string> {
     // moodle_token is no longer sourced from config. MoodleMcpClient handles it.
 
     try {
       // Basic URL validation
       new URL(args.resource_file_url);
-    } catch (e) {
+    } catch {
       return "Erro: O resource_file_url fornecido não é um URL válido.";
     }
 
@@ -57,7 +54,9 @@ export class GetResourceFileContentTool extends StructuredTool<
     console.log(
       `[GetResourceFileContentTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
+      }' with input: ${JSON.stringify(
+        mcpServerInput
+      )} (token will be injected by client)`
     );
     try {
       const resultString = await this.moodleClient.callMcpTool(
@@ -68,7 +67,10 @@ export class GetResourceFileContentTool extends StructuredTool<
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
-      console.error(`[GetResourceFileContentTool] Error in tool ${this.name}:`, error);
+      console.error(
+        `[GetResourceFileContentTool] Error in tool ${this.name}:`,
+        error
+      );
       return `Erro na ferramenta ${this.name}: ${errorMessage}`;
     }
   }

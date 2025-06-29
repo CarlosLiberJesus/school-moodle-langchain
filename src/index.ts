@@ -12,7 +12,7 @@ import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { MoodleMcpClient } from "../lib/moodle-mcp-client.js";
 import { GetMoodleCoursesTool } from "./tools/tool-get-courses.js";
 import readline from "readline";
-import express, { Request, Response } from "express"; // Adicionado express
+import express from "express"; // Adicionado express
 import { setupFileLogger } from "../lib/logger.js";
 import { GetMoodleCourseContentsTool } from "./tools/tool-course-details.js";
 import { FetchActivityContentTool } from "./tools/tool-get-activity-content.js";
@@ -55,7 +55,7 @@ let moodleClientInstance: MoodleMcpClient | undefined;
 let agentExecutorInstance: AgentExecutor | undefined;
 let currentToken: string | undefined; // To track the token used for initialization
 
-async function initializeAgent(moodleToken: string) {
+async function initializeAgent(moodleToken: string, courseId?: number) {
   // If agent is already initialized with the same token, return the existing instance
   if (agentExecutorInstance && currentToken === moodleToken) {
     console.log("Agente LangChain já inicializado com o token atual.");
@@ -63,7 +63,9 @@ async function initializeAgent(moodleToken: string) {
   }
 
   if (!moodleToken) {
-    console.error("Erro: Tentativa de inicializar o agente sem um Moodle token.");
+    console.error(
+      "Erro: Tentativa de inicializar o agente sem um Moodle token."
+    );
     throw new Error("Moodle token é necessário para inicializar o agente.");
   }
 
@@ -130,7 +132,11 @@ Exemplos a ter cuidado: base de dados, utilizador, computador, gestor, revisiona
     new MessagesPlaceholder("agent_scratchpad"),
   ]);
 
-  moodleClientInstance = new MoodleMcpClient(MOODLE_MCP_SERVER, moodleToken);
+  moodleClientInstance = new MoodleMcpClient(
+    MOODLE_MCP_SERVER,
+    moodleToken,
+    courseId
+  );
 
   const tools = [
     new GetMoodleCoursesTool(moodleClientInstance),
@@ -153,15 +159,20 @@ Exemplos a ter cuidado: base de dados, utilizador, computador, gestor, revisiona
 export async function invokeAgent(params: {
   input: string;
   moodle_user_token: string;
-  moodle_course_id?: string; // course_id is optional at this level
+  moodle_course_id?: number | string; // course_id is optional at this level
   chat_history: Array<HumanMessage | AIMessage>;
 }) {
   if (!params.moodle_user_token) {
-    console.error("[Agent Service] Erro: Moodle user token não fornecido para invokeAgent.");
+    console.error(
+      "[Agent Service] Erro: Moodle user token não fornecido para invokeAgent."
+    );
     throw new Error("Moodle user token é obrigatório.");
   }
 
-  const executor = await initializeAgent(params.moodle_user_token);
+  const executor = await initializeAgent(
+    params.moodle_user_token,
+    params.moodle_course_id ? Number(params.moodle_course_id) : undefined
+  );
 
   let augmentedInput = params.input;
   if (params.moodle_course_id) {
@@ -180,14 +191,8 @@ export async function invokeAgent(params: {
     `[Agent Service] Invocando agentExecutor com input (final): "${invokeParams.input}" e chat_history.`
   );
 
-  // moodle_user_token and moodle_course_id are no longer passed in configurable for token management here
-  // course_id is now part of the augmentedInput if provided
-  const result = await executor.invoke(invokeParams, {
-    configurable: {
-      // Pass other session-specific configurations if any, but not the token for tools
-      moodle_course_id: params.moodle_course_id, // Still can be useful for some non-tool related configurations or logging
-    }
-  });
+  // Token e course_id são geridos pelo MoodleClient, não precisam ser passados aqui
+  const result = await executor.invoke(invokeParams);
   return result;
 }
 
@@ -200,46 +205,57 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error(
       "Erro: Token Moodle não fornecido como primeiro argumento da linha de comando."
     );
-    console.log("Uso: node build/src/index.js <SEU_MOODLE_TOKEN> [ID_CURSO_OPCIONAL]");
+    console.log(
+      "Uso: node build/src/index.js <SEU_MOODLE_TOKEN> [ID_CURSO_OPCIONAL]"
+    );
     process.exit(1);
   }
 
   console.log("Agente LangChain a correr em modo de teste local (readline).");
 
-  initializeAgent(cliMoodleToken).then(() => { // Initialize with token from CLI
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
+  initializeAgent(cliMoodleToken, cliCourseId ? Number(cliCourseId) : undefined)
+    .then(() => {
+      // Initialize with token from CLI
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
 
-    const chat_history: Array<HumanMessage | AIMessage> = [];
-    rl.setPrompt("User: ");
-    rl.prompt();
-
-    rl.on("line", async (input) => {
-      try {
-        // Em modo CLI, o course_id é opcional e usado para aumentar o input.
-        // O token já foi usado para inicializar o agentExecutorInstance.
-        const response = await invokeAgent({
-          input: input, // O input original, invokeAgent irá aumentá-lo se cliCourseId estiver definido
-          moodle_user_token: cliMoodleToken, // Necessário para re-inicialização se o token mudar (improvável no CLI)
-          moodle_course_id: cliCourseId, // Passado para invokeAgent para aumentar o input
-          chat_history: chat_history,
-        });
-
-        console.log("\nAgent Output: ", response.output);
-
-        chat_history.push(new HumanMessage(input));
-        chat_history.push(new AIMessage(response.output));
-      } catch (e: any) {
-        console.error("\n[Agent Loop] Error during agent invocation:", e.message || e);
-      }
+      const chat_history: Array<HumanMessage | AIMessage> = [];
+      rl.setPrompt("User: ");
       rl.prompt();
+
+      rl.on("line", async (input) => {
+        try {
+          // Em modo CLI, o course_id é opcional e usado para aumentar o input.
+          // O token já foi usado para inicializar o agentExecutorInstance.
+          const response = await invokeAgent({
+            input: input, // O input original, invokeAgent irá aumentá-lo se cliCourseId estiver definido
+            moodle_user_token: cliMoodleToken, // Necessário para re-inicialização se o token mudar (improvável no CLI)
+            moodle_course_id: cliCourseId, // Passado para invokeAgent para aumentar o input
+            chat_history: chat_history,
+          });
+
+          console.log("\nAgent Output: ", response.output);
+
+          chat_history.push(new HumanMessage(input));
+          chat_history.push(new AIMessage(response.output));
+        } catch (e: unknown) {
+          console.error(
+            "\n[Agent Loop] Error during agent invocation:",
+            e instanceof Error ? e.message : e
+          );
+        }
+        rl.prompt();
+      });
+    })
+    .catch((error) => {
+      console.error(
+        "Falha ao inicializar o agente para o modo de teste local:",
+        error
+      );
+      process.exit(1);
     });
-  }).catch(error => {
-    console.error("Falha ao inicializar o agente para o modo de teste local:", error);
-    process.exit(1);
-  });
 } else {
   // Modo Servidor API
   const app = express();
@@ -247,11 +263,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   app.use(express.json());
 
-  app.post("/invoke", async (req: Request, res: Response) => {
-    const { input, moodle_user_token, moodle_course_id, chat_history } = req.body;
+  app.post("/invoke", async (req, res) => {
+    const { input, moodle_user_token, moodle_course_id, chat_history } =
+      req.body;
 
     if (!input || !moodle_user_token) {
-      return res.status(400).json({ error: "Parâmetros 'input' e 'moodle_user_token' são obrigatórios." });
+      return res.status(400).json({
+        error: "Parâmetros 'input' e 'moodle_user_token' são obrigatórios.",
+      });
     }
     // moodle_course_id é opcional no pedido, mas pode ser obrigatório para certas tools.
     // A lógica de 'invokeAgent' e das tools deve lidar com sua presença/ausência.
@@ -260,13 +279,22 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       const result = await invokeAgent({
         input,
         moodle_user_token,
-        moodle_course_id: moodle_course_id ? Number(moodle_course_id) : undefined,
+        moodle_course_id: moodle_course_id
+          ? Number(moodle_course_id)
+          : undefined,
         chat_history: chat_history || [], // Garante que chat_history seja um array
       });
       res.json(result);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("[API Server] Erro ao invocar o agente:", error);
-      res.status(500).json({ error: error.message || "Erro interno do servidor." });
+      res
+        .status(500)
+        .json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Erro interno do servidor.",
+        });
     }
   });
 

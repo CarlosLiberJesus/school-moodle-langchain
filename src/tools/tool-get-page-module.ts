@@ -30,16 +30,13 @@ export class GetPageModuleContentTool extends StructuredTool<
     this.moodleClient = moodleClient;
   }
 
-  async _call(
-    args: GetPageModuleContentToolInput,
-    config?: Record<string, any> // config is kept for Langchain compatibility but not used for token
-  ): Promise<string> {
+  async _call(args: GetPageModuleContentToolInput): Promise<string> {
     // moodle_token is no longer sourced from config. MoodleMcpClient handles it.
 
     try {
       // Basic URL validation, can be enhanced if needed
       new URL(args.page_content_url);
-    } catch (e) {
+    } catch {
       return "Erro: O page_content_url fornecido não é um URL válido.";
     }
 
@@ -53,7 +50,9 @@ export class GetPageModuleContentTool extends StructuredTool<
     console.log(
       `[GetPageModuleContentTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
+      }' with input: ${JSON.stringify(
+        mcpServerInput
+      )} (token will be injected by client)`
     );
     try {
       const resultString = await this.moodleClient.callMcpTool(
@@ -64,7 +63,10 @@ export class GetPageModuleContentTool extends StructuredTool<
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
-      console.error(`[GetPageModuleContentTool] Error in tool ${this.name}:`, error);
+      console.error(
+        `[GetPageModuleContentTool] Error in tool ${this.name}:`,
+        error
+      );
       return `Erro na ferramenta ${this.name}: ${errorMessage}`;
     }
   }
