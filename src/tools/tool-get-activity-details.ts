@@ -3,38 +3,34 @@ import { StructuredTool } from "@langchain/core/tools";
 import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // moodle_token is removed from schema as it's handled by MoodleMcpClient
+// course_id removido do schema. Será obtido do config.
 const getActivityDetailsToolSchema = z.object({
   activity_id: z
     .number()
     .optional()
     .describe(
-      "O ID da atividade (Course Module ID - cmid) para obter os detalhes. Use isto OU course_id e activity_name."
+      "O ID da atividade (Course Module ID - cmid) para obter os detalhes. Use isto OU activity_name (o ID do curso será obtido do contexto)."
     ),
-  course_id: z
-    .number()
-    .optional()
-    .describe(
-      "O ID do curso onde a atividade está localizada. Necessário se activity_id não for fornecido e não estiver no contexto."
-    ),
+  // course_id foi removido. O sistema gere o ID do curso.
   activity_name: z
     .string()
     .optional()
     .describe(
-      "O nome (ou parte do nome) da atividade. Necessário se activity_id não for fornecido."
+      "O nome (ou parte do nome) da atividade. Use isto se não tiver o activity_id. O ID do curso será obtido do contexto."
     ),
 });
 
 type GetActivityDetailsToolInput = z.infer<typeof getActivityDetailsToolSchema>;
 
 export class GetActivityDetailsTool extends StructuredTool<
-  typeof getActivityDetailsToolSchema // Correctly typed now
+  typeof getActivityDetailsToolSchema
 > {
   name = "get_activity_details";
   description =
     "Recupera os detalhes de uma atividade específica do Moodle. " +
-    "Pode identificar a atividade por 'activity_id' OU por 'course_id' (do argumento ou do contexto) juntamente com 'activity_name'.";
+    "Pode identificar a atividade por 'activity_id' OU por 'activity_name'. O ID do curso é gerido automaticamente pelo sistema.";
   schema = getActivityDetailsToolSchema;
-  moodleClient: MoodleMcpClient; // Explicitly typed
+  moodleClient: MoodleMcpClient;
 
   constructor(moodleClient: MoodleMcpClient) {
     super();
@@ -43,48 +39,41 @@ export class GetActivityDetailsTool extends StructuredTool<
 
   async _call(
     args: GetActivityDetailsToolInput,
-    config?: Record<string, any> // config is optional and used for course_id context
+    config?: Record<string, any>
   ): Promise<string> {
-    // moodle_token is no longer sourced from config. MoodleMcpClient handles it.
+    const course_id_from_config = config?.configurable?.moodle_course_id;
 
-    const courseIdFromConfig =
-      config?.configurable?.moodle_course_id ||
-      config?.metadata?.moodle_course_id;
-
-    // mcpServerInput will not include moodle_token here.
     const mcpServerInput: {
       activity_id?: number;
       course_id?: number;
       activity_name?: string;
     } = {};
 
-    let determinedCourseId = args.course_id ?? courseIdFromConfig;
-
     if (args.activity_id !== undefined) {
       mcpServerInput.activity_id = args.activity_id;
-      // If activity_id is provided, course_id might not be strictly necessary for some MCP implementations,
-      // but it's good to pass if available, for context or if MCP requires it.
-      if (determinedCourseId !== undefined) {
-        mcpServerInput.course_id = determinedCourseId;
+      if (typeof course_id_from_config === 'number') {
+        mcpServerInput.course_id = course_id_from_config;
       }
     } else if (args.activity_name !== undefined) {
-      if (determinedCourseId !== undefined) {
-        mcpServerInput.course_id = determinedCourseId;
-        mcpServerInput.activity_name = args.activity_name;
-        console.log(
-          `[GetActivityDetailsTool] Usando course_id (${determinedCourseId}) e activity_name: ${args.activity_name}`
+      if (typeof course_id_from_config !== 'number') {
+        console.error(
+          `[GetActivityDetailsTool] Erro: activity_name ('${args.activity_name}') fornecido, mas course_id não está disponível no contexto.`
         );
-      } else {
-        return "Erro: Para usar 'activity_name' em get_activity_details, um 'course_id' deve ser fornecido (via argumento ou contexto).";
+        return `Erro na ferramenta ${this.name}: Para pesquisar uma atividade por nome, o ID do curso (course_id) deve estar definido no contexto.`;
       }
+      mcpServerInput.course_id = course_id_from_config;
+      mcpServerInput.activity_name = args.activity_name;
+      console.log(
+        `[GetActivityDetailsTool] Usando course_id (${course_id_from_config}) do contexto e activity_name: ${args.activity_name}`
+      );
     } else {
-      return "Erro: Para usar get_activity_details, forneça 'activity_id', OU ('activity_name' e um 'course_id' implícito/explícito).";
+      return `Erro na ferramenta ${this.name}: Forneça 'activity_id' ou 'activity_name'. O ID do curso é gerido pelo sistema.`;
     }
 
     console.log(
       `[GetActivityDetailsTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
+      }' with input: ${JSON.stringify(mcpServerInput)} (token injected by client, course_id from config if applicable)`
     );
     try {
       const resultString = await this.moodleClient.callMcpTool(

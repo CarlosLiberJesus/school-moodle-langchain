@@ -4,8 +4,9 @@ import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
 // 1. Defina o schema Zod
 // moodle_token is removed as it's now handled by MoodleMcpClient
+// course_id is removed from schema, will be sourced from config
 const getMoodleCourseContentsToolSchema = z.object({
-  course_id: z.number().describe("O ID do curso a obter conteúdos."),
+  // Nenhum argumento esperado diretamente do LLM para esta tool.
 });
 
 // 2. Tipo do input
@@ -18,7 +19,7 @@ export class GetMoodleCourseContentsTool extends StructuredTool<
 > {
   name = "get_course_contents";
   description =
-    "Recupera as secções e módulos de um curso específico do Moodle.";
+    "Recupera as secções e módulos de um curso específico do Moodle. O ID do curso é gerido automaticamente pelo sistema.";
   schema = getMoodleCourseContentsToolSchema;
   moodleClient: MoodleMcpClient;
 
@@ -28,36 +29,36 @@ export class GetMoodleCourseContentsTool extends StructuredTool<
   }
 
   async _call(
-    args: GetMoodleCourseContentsToolInput,
-    config?: Record<string, any> // config is kept for Langchain compatibility but not used for token
+    args: GetMoodleCourseContentsToolInput, // args estará vazio {}
+    config?: Record<string, any>
   ): Promise<string> {
-    // moodle_token is no longer sourced from config or args here.
-    // MoodleMcpClient will inject the token.
+    const course_id = config?.configurable?.moodle_course_id;
 
-    const mcpServerInput: {
-      course_id: number;
-    } = {
-      course_id: args.course_id,
+    if (typeof course_id !== 'number') {
+      console.error(
+        `[GetMoodleCourseContentsTool] Erro: course_id não fornecido ou inválido no config. Recebido: ${course_id}`
+      );
+      return `Erro na ferramenta ${this.name}: O ID do curso (course_id) é obrigatório e deve ser um número. Verifique se o contexto do curso está definido.`;
+    }
+
+    const mcpServerInput = {
+      course_id: course_id,
     };
 
     console.log(
-      `[GetMoodleCourseContentsTool] Calling MCP tool '${ // Corrected class name in log
+      `[GetMoodleCourseContentsTool] Calling MCP tool '${
         this.name
-      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client)`
+      }' with input: ${JSON.stringify(mcpServerInput)} (token will be injected by client, course_id from config)`
     );
     try {
-      // MoodleMcpClient.callMcpTool will now add the moodle_token
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
-        mcpServerInput // Pass only the relevant args for the MCP tool's own params
+        mcpServerInput
       );
-      // Assuming resultString is the direct JSON string response for course contents.
-      // If it needs to be parsed into a specific structure, that should be done here.
       return resultString;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);
-      // Log o erro completo também pode ser útil aqui
       console.error(`[GetMoodleCourseContentsTool] Error in tool ${this.name}:`, error);
       return `Erro na ferramenta ${this.name}: ${errorMessage}`;
     }

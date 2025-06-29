@@ -2,10 +2,10 @@ import { z } from "zod";
 import { StructuredTool } from "@langchain/core/tools";
 import { MoodleMcpClient } from "../../lib/moodle-mcp-client.js";
 
+// course_id removido do schema. Será obtido do config.
 const getCourseActivitiesToolSchema = z.object({
-  course_id: z.coerce
-    .number() // Coerce to number
-    .describe("O ID do curso para o qual as atividades devem ser recuperadas."),
+  // Nenhum argumento esperado diretamente do LLM para esta tool.
+  // course_id será fornecido pelo sistema via config.
 });
 
 const activitySchema = z.object({
@@ -40,12 +40,20 @@ export class GetCourseActivitiesTool extends StructuredTool<
   }
 
   async _call(
-    args: GetCourseActivitiesToolInput,
+    args: GetCourseActivitiesToolInput, // args estará vazio {}
     config?: Record<string, any>
   ): Promise<GetCourseActivitiesToolOutput | string> {
-    const { course_id } = args;
+    const course_id = config?.configurable?.moodle_course_id;
+
+    if (typeof course_id !== 'number') {
+      console.error(
+        `[GetCourseActivitiesTool] Erro: course_id não fornecido ou inválido no config. Recebido: ${course_id}`
+      );
+      return `Erro na ferramenta ${this.name}: O ID do curso (course_id) é obrigatório e deve ser um número. Verifique se o contexto do curso está definido.`;
+    }
+
     const mcpServerInput = {
-      course_id,
+      course_id, // course_id obtido do config
     };
 
     console.log(
@@ -53,7 +61,7 @@ export class GetCourseActivitiesTool extends StructuredTool<
         this.name
       }' with input: ${JSON.stringify(
         mcpServerInput
-      )} (token will be injected by client)`
+      )} (token will be injected by client, course_id from config)`
     );
 
     try {

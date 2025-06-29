@@ -12,6 +12,7 @@ import { HumanMessage, AIMessage } from "@langchain/core/messages";
 import { MoodleMcpClient } from "../lib/moodle-mcp-client.js";
 import { GetMoodleCoursesTool } from "./tools/tool-get-courses.js";
 import readline from "readline";
+import express, { Request, Response } from "express"; // Adicionado express
 import { setupFileLogger } from "../lib/logger.js";
 import { GetMoodleCourseContentsTool } from "./tools/tool-course-details.js";
 import { FetchActivityContentTool } from "./tools/tool-get-activity-content.js";
@@ -86,6 +87,7 @@ Instruções Essenciais:
     *   Se a ferramenta requer argumentos, forneça-os num objeto JSON válido, conforme o schema da ferramenta.
     *   Se a ferramenta pode ser chamada sem argumentos específicos (ex: para obter todos os itens), e o utilizador não especificou um filtro, chame a ferramenta com um objeto JSON vazio {{}} como argumento.
     *   **Autenticação (Token Moodle): O token Moodle necessário é gerido centralmente. NÃO o inclua nos argumentos da ferramenta nem o peça ao utilizador.**
+    *   **Contexto do Curso (ID do Curso): Se o utilizador já especificou um curso/disciplina, o ID do curso (course_id) é gerido centralmente. NÃO o inclua nos argumentos da ferramenta a menos que a descrição da ferramenta explicitamente o peça para um filtro específico (o que é raro), e NÃO o peça ao utilizador.**
     *   NÃO peça confirmação ao utilizador para usar uma ferramenta ou para os seus argumentos, a menos que a pergunta seja ambígua e necessite de clarificação ANTES de selecionar ou invocar uma ferramenta.
 4.  **Utilização da Observação:** Após usar uma ferramenta, receberá uma observação.
     *   Se a observação contém a informação necessária, responda diretamente à pergunta do utilizador.
@@ -190,6 +192,7 @@ export async function invokeAgent(params: {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // Modo de linha de comando
   const cliMoodleToken = process.argv[2];
   const cliCourseId = process.argv[3]; // Optional course ID for context
 
@@ -203,7 +206,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   console.log("Agente LangChain a correr em modo de teste local (readline).");
 
-  initializeAgent(cliMoodleToken).then((executor) => { // Initialize with token from CLI
+  initializeAgent(cliMoodleToken).then(() => { // Initialize with token from CLI
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -215,39 +218,59 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
     rl.on("line", async (input) => {
       try {
-        let augmentedInput = input;
-        if (cliCourseId) {
-          augmentedInput = `Referente à disciplina com ID ${cliCourseId}: ${input}`;
-        }
-        console.log(`\n[Agent Loop] Invoking agent with input: "${augmentedInput}"`);
-
-        // Ensure agent is initialized with the correct token (should be already, but good for safety if token could change)
-        // await initializeAgent(cliMoodleToken); // This might be redundant if token doesn't change per line
-
-        const response = await agentExecutorInstance!.invoke( // agentExecutorInstance should be defined
-          {
-            input: augmentedInput,
-            chat_history: chat_history,
-          },
-          {
-            configurable: { // Pass course_id if available, token is handled by MoodleMcpClient
-              moodle_course_id: cliCourseId ? Number(cliCourseId) : undefined,
-            }
-          }
-        );
+        // Em modo CLI, o course_id é opcional e usado para aumentar o input.
+        // O token já foi usado para inicializar o agentExecutorInstance.
+        const response = await invokeAgent({
+          input: input, // O input original, invokeAgent irá aumentá-lo se cliCourseId estiver definido
+          moodle_user_token: cliMoodleToken, // Necessário para re-inicialização se o token mudar (improvável no CLI)
+          moodle_course_id: cliCourseId, // Passado para invokeAgent para aumentar o input
+          chat_history: chat_history,
+        });
 
         console.log("\nAgent Output: ", response.output);
 
-        chat_history.push(new HumanMessage(input)); // Store original input in history
+        chat_history.push(new HumanMessage(input));
         chat_history.push(new AIMessage(response.output));
       } catch (e: any) {
-        console.error("\n[Agent Loop] Error during agent invocation:", e);
-        // Avoid adding error to history as AIMessage if it's a system error
+        console.error("\n[Agent Loop] Error during agent invocation:", e.message || e);
       }
       rl.prompt();
     });
   }).catch(error => {
     console.error("Falha ao inicializar o agente para o modo de teste local:", error);
     process.exit(1);
+  });
+} else {
+  // Modo Servidor API
+  const app = express();
+  const port = process.env.PORT || 3010;
+
+  app.use(express.json());
+
+  app.post("/invoke", async (req: Request, res: Response) => {
+    const { input, moodle_user_token, moodle_course_id, chat_history } = req.body;
+
+    if (!input || !moodle_user_token) {
+      return res.status(400).json({ error: "Parâmetros 'input' e 'moodle_user_token' são obrigatórios." });
+    }
+    // moodle_course_id é opcional no pedido, mas pode ser obrigatório para certas tools.
+    // A lógica de 'invokeAgent' e das tools deve lidar com sua presença/ausência.
+
+    try {
+      const result = await invokeAgent({
+        input,
+        moodle_user_token,
+        moodle_course_id: moodle_course_id ? Number(moodle_course_id) : undefined,
+        chat_history: chat_history || [], // Garante que chat_history seja um array
+      });
+      res.json(result);
+    } catch (error: any) {
+      console.error("[API Server] Erro ao invocar o agente:", error);
+      res.status(500).json({ error: error.message || "Erro interno do servidor." });
+    }
+  });
+
+  app.listen(port, () => {
+    console.log(`Servidor LangChain API a escutar na porta ${port}`);
   });
 }
