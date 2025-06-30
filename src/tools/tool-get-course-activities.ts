@@ -13,10 +13,10 @@ const getCourseActivitiesToolSchema = z.object({
 });
 
 const activitySchema = z.object({
-  id: z.string().describe("O ID da atividade."),
+  id: z.number().describe("O ID da atividade (module ID)."),
   name: z.string().describe("O nome da atividade."),
-  url: z.string().optional().describe("A URL da atividade."),
-  fileurl: z.string().optional().describe("A URL do arquivo da atividade."),
+  url: z.string().nullable().describe("A URL da atividade."),
+  fileurl: z.string().nullable().describe("A URL do arquivo da atividade."),
   timemodified: z
     .number()
     .describe("Timestamp da última modificação da atividade."),
@@ -25,9 +25,6 @@ const activitySchema = z.object({
 type GetCourseActivitiesToolInput = z.infer<
   typeof getCourseActivitiesToolSchema
 >;
-
-type Activity = z.infer<typeof activitySchema>;
-type GetCourseActivitiesToolOutput = Activity[];
 
 export class GetCourseActivitiesTool extends StructuredTool<
   typeof getCourseActivitiesToolSchema
@@ -43,9 +40,7 @@ export class GetCourseActivitiesTool extends StructuredTool<
     this.moodleClient = moodleClient;
   }
 
-  async _call(
-    args: GetCourseActivitiesToolInput
-  ): Promise<GetCourseActivitiesToolOutput | string> {
+  async _call(args: GetCourseActivitiesToolInput): Promise<string> {
     // Se course_id não for fornecido nos args, o MoodleClient irá injetar automaticamente
     const mcpServerInput = args.course_id ? { course_id: args.course_id } : {};
 
@@ -62,16 +57,58 @@ export class GetCourseActivitiesTool extends StructuredTool<
         this.name,
         mcpServerInput
       );
-      let parsedResult: GetCourseActivitiesToolOutput;
+
+      let parsedResult: unknown;
       try {
         parsedResult = JSON.parse(result);
       } catch (parseError) {
         console.error(
-          `[GetCourseActivitiesTool] Error parsing result from MCP tool ${this.name}: ${parseError}`
+          `[GetCourseActivitiesTool] Error parsing JSON from MCP tool ${this.name}: ${parseError}`
         );
-        return `Erro ao processar resposta da ferramenta ${this.name}: Formato inválido.`;
+        return `Erro ao processar resposta da ferramenta ${this.name}: JSON inválido.`;
       }
-      return parsedResult;
+
+      // Validar estrutura usando Zod schema
+      try {
+        const activitiesArray = z.array(activitySchema);
+        const validatedResult = activitiesArray.parse(parsedResult);
+
+        console.log(
+          `[GetCourseActivitiesTool] Successfully validated ${validatedResult.length} activities`
+        );
+
+        // Converter para string legível para o LLM processar
+        const activitiesSummary = validatedResult
+          .map(
+            (activity) =>
+              `ID: ${activity.id}, Nome: "${
+                activity.name
+              }", Data modificação: ${
+                activity.timemodified > 0
+                  ? new Date(activity.timemodified * 1000)
+                      .toISOString()
+                      .split("T")[0]
+                  : "N/A"
+              }`
+          )
+          .join("\n");
+
+        return `Lista de ${validatedResult.length} atividades da disciplina:\n\n${activitiesSummary}`;
+      } catch (validationError) {
+        console.error(
+          `[GetCourseActivitiesTool] Schema validation error:`,
+          validationError
+        );
+        console.error(
+          `[GetCourseActivitiesTool] Raw result from MCP:`,
+          JSON.stringify(parsedResult, null, 2)
+        );
+        return `Erro na validação dos dados retornados: ${
+          validationError instanceof Error
+            ? validationError.message
+            : "Estrutura inválida"
+        }`;
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);

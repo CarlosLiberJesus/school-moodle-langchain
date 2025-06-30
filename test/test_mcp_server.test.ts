@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { MoodleMcpClient } from "../lib/moodle-mcp-client.js";
-import { GetMoodleCourseContentsTool } from "../src/tools/tool-course-details.js";
+import { GetMoodleCourseContentsTool } from "../src/tools/tool-course-contents.js";
 import { FetchActivityContentTool } from "../src/tools/tool-get-activity-content.js";
 import { GetActivityDetailsTool } from "../src/tools/tool-get-activity-details.js";
 import { GetMoodleCoursesTool } from "../src/tools/tool-get-courses.js";

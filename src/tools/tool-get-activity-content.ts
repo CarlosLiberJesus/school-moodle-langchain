@@ -22,6 +22,41 @@ const fetchActivityContentToolSchema = z.object({
     ),
 });
 
+// Schema Zod para validar a resposta do MCP server
+const activityContentSchema = z.object({
+  activityName: z.string().describe("The name of the activity."),
+  activityType: z
+    .string()
+    .describe("The Moodle module type (e.g., assign, page, resource)."),
+  activityUrl: z
+    .string()
+    .describe("The main URL to view the activity in Moodle."),
+  contentType: z
+    .enum([
+      "text",
+      "html_cleaned",
+      "file_placeholder",
+      "url_details",
+      "error",
+      "empty",
+    ])
+    .describe("The nature of the main content provided."),
+  content: z
+    .string()
+    .describe("The main textual content extracted from the activity."),
+  files: z
+    .array(
+      z.object({
+        filename: z.string().describe("The name of the file."),
+        fileurl: z
+          .string()
+          .describe("The direct URL to access/download the file."),
+        mimetype: z.string().describe("The MIME type of the file."),
+      })
+    )
+    .describe("A list of files associated with this activity."),
+});
+
 // Tipagem para os argumentos (inferida do schema)
 type FetchActivityContentToolInput = z.infer<
   typeof fetchActivityContentToolSchema
@@ -73,12 +108,72 @@ export class FetchActivityContentTool extends StructuredTool<
         mcpServerInput
       )} (token e course_id serão injetados pelo MoodleClient se necessário)`
     );
+
     try {
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
         mcpServerInput
       );
-      return resultString;
+
+      // Parse e valida a resposta JSON do MCP server
+      let parsedData: unknown;
+      try {
+        parsedData = JSON.parse(resultString);
+      } catch (parseError) {
+        console.error(
+          `[FetchActivityContentTool] Failed to parse JSON response:`,
+          parseError
+        );
+        return `Erro: Resposta inválida do servidor MCP para ${this.name}`;
+      }
+
+      // Valida com Zod
+      const validationResult = activityContentSchema.safeParse(parsedData);
+      if (!validationResult.success) {
+        console.error(
+          `[FetchActivityContentTool] Validation failed for ${this.name}:`,
+          validationResult.error.issues
+        );
+        console.log(
+          `[FetchActivityContentTool] Raw data that failed validation:`,
+          JSON.stringify(parsedData, null, 2)
+        );
+        return `Erro de validação na ferramenta ${
+          this.name
+        }: ${validationResult.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join(", ")}`;
+      }
+
+      console.log(
+        `[FetchActivityContentTool] Successfully validated activity content`
+      );
+
+      const activityContent = validationResult.data;
+
+      // Formatar o conteúdo da atividade de forma legível para o LLM
+      let formattedOutput = `Conteúdo da atividade:\n\n`;
+      formattedOutput += `Nome: ${activityContent.activityName}\n`;
+      formattedOutput += `Tipo: ${activityContent.activityType}\n`;
+      formattedOutput += `URL: ${activityContent.activityUrl}\n`;
+      formattedOutput += `Tipo de conteúdo: ${activityContent.contentType}\n\n`;
+
+      if (activityContent.content && activityContent.content.trim()) {
+        formattedOutput += `Conteúdo:\n${activityContent.content.trim()}\n\n`;
+      }
+
+      if (activityContent.files && activityContent.files.length > 0) {
+        formattedOutput += `Ficheiros associados (${activityContent.files.length}):\n`;
+        activityContent.files.forEach((file, index) => {
+          formattedOutput += `  ${index + 1}. ${file.filename}\n`;
+          formattedOutput += `     URL: ${file.fileurl}\n`;
+          formattedOutput += `     Tipo: ${file.mimetype}\n`;
+        });
+      } else {
+        formattedOutput += `Sem ficheiros associados.\n`;
+      }
+
+      return formattedOutput;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);

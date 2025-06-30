@@ -58,12 +58,28 @@ export class GetResourceFileContentTool extends StructuredTool<
         mcpServerInput
       )} (token will be injected by client)`
     );
+
     try {
       const resultString = await this.moodleClient.callMcpTool(
         this.name,
         mcpServerInput
       );
-      return resultString;
+
+      console.log(
+        `[GetResourceFileContentTool] Successfully retrieved file content`
+      );
+
+      // O MCP server já retorna uma string diretamente para esta tool
+      // Vamos formatar de forma mais legível
+      if (!resultString || resultString.trim() === "") {
+        return `Conteúdo do ficheiro está vazio ou não foi possível extrair o texto do tipo ${args.mimetype}.`;
+      }
+
+      // Formatar o conteúdo do ficheiro de forma legível
+      let formattedOutput = `Conteúdo do ficheiro (${args.mimetype}):\n\n`;
+      formattedOutput += resultString.trim();
+
+      return formattedOutput;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : JSON.stringify(error);

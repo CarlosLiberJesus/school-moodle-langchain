@@ -14,7 +14,7 @@ import { GetMoodleCoursesTool } from "./tools/tool-get-courses.js";
 import readline from "readline";
 import express from "express"; // Adicionado express
 import { setupFileLogger } from "../lib/logger.js";
-import { GetMoodleCourseContentsTool } from "./tools/tool-course-details.js";
+import { GetMoodleCourseContentsTool } from "./tools/tool-course-contents.js";
 import { FetchActivityContentTool } from "./tools/tool-get-activity-content.js";
 import { GetActivityDetailsTool } from "./tools/tool-get-activity-details.js";
 import { GetPageModuleContentTool } from "./tools/tool-get-page-module.js";
@@ -287,14 +287,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       res.json(result);
     } catch (error: unknown) {
       console.error("[API Server] Erro ao invocar o agente:", error);
-      res
-        .status(500)
-        .json({
-          error:
-            error instanceof Error
-              ? error.message
-              : "Erro interno do servidor.",
-        });
+      res.status(500).json({
+        error:
+          error instanceof Error ? error.message : "Erro interno do servidor.",
+      });
     }
   });
 
