@@ -26,20 +26,25 @@ Este serviço pode ser executado em dois modos: Modo CLI (Interface de Linha de 
 Este modo é útil para testar o agente diretamente no seu terminal.
 
 **Uso:**
+
 ```bash
 node .\build\src\index.js --mode cli --token <SEU_MOODLE_TOKEN> [--course-id <ID_CURSO_OPCIONAL>]
 ```
 
 **Argumentos:**
+
 - `--mode cli`: Especifica a execução em modo CLI.
 - `--token <SEU_MOODLE_TOKEN>`: (Obrigatório) O seu token de utilizador do Moodle.
 - `--course-id <ID_CURSO_OPCIONAL>`: (Opcional) O ID de um curso específico do Moodle para fornecer contexto inicial ao agente.
 
 Exemplo:
+
 ```bash
 node .\build\src\index.js --mode cli --token 3179a582e0d26d63f534f3cce43e40cd --course-id 6
 ```
+
 ou sem ID de curso:
+
 ```bash
 node .\build\src\index.js --mode cli --token 3179a582e0d26d63f534f3cce43e40cd
 ```
@@ -51,17 +56,20 @@ Após iniciar, você verá um prompt `User:` onde poderá digitar suas perguntas
 Este modo inicia um servidor Express que expõe um endpoint `/invoke` para interagir com o agente programaticamente.
 
 **Uso:**
+
 ```bash
 node .\build\src\index.js --mode api
 ```
 
 **Argumentos:**
+
 - `--mode api`: Especifica a execução em modo API.
 
 O servidor será iniciado, por padrão, na porta `3010` (ou na porta especificada pela variável de ambiente `PORT`).
 O endpoint disponível é: `POST /invoke`
 
 **Corpo da Requisição para `/invoke` (JSON):**
+
 ```json
 {
   "input": "A sua pergunta para o agente",
@@ -72,6 +80,7 @@ O endpoint disponível é: `POST /invoke`
 ```
 
 Exemplo de como chamar a API usando `curl`:
+
 ```bash
 curl -X POST http://localhost:3010/invoke \
 -H "Content-Type: application/json" \
@@ -85,7 +94,5 @@ Se o `moodle_course_id` for fornecido no modo API, ele será usado para contextu
 
 ## TODO
 
-- [ ] Better Documentation (this is a start!)
-- [ ] WebApp Communicating again by SAAS API
 - [ ] Two paths, teacher vs Student
 - [ ] LangChain analize and improve output
